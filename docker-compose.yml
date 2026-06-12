@@ -1,0 +1,11 @@
+services:
+  agentbridge:
+    build: .
+    container_name: agentbridge
+    ports:
+      - "8765:8765"
+    volumes:
+      - .:/app
+    shm_size: "2gb"
+    environment:
+      - PYTHONUNBUFFERED=1

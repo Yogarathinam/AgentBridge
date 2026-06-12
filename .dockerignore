@@ -1,0 +1,14 @@
+.venv
+venv
+env
+__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
+build
+dist
+output
+data
+tests/__pycache__
+app/__pycache__

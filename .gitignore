@@ -1,0 +1,230 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# =========================
+# Virtual environments
+# =========================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# =========================
+# Build / packaging
+# =========================
+build/
+dist/
+*.egg-info/
+.eggs/
+develop-eggs/
+downloads/
+parts/
+sdist/
+var/
+wheels/
+MANIFEST
+*.spec
+
+# =========================
+# Testing / coverage
+# =========================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cache/
+*.cover
+*.py,cover
+.hypothesis/
+
+# =========================
+# IDE / editor
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# =========================
+# Environment files
+# =========================
+.env
+.env.*
+*.env
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =========================
+# Project runtime data
+# =========================
+data/
+!data/.gitkeep
+
+# If you want to keep the folder but ignore generated runtime files:
+# data/chat_history.json
+# data/runtime_state.json
+# data/chromium_profile/
+# data/chromium_profile/**
+
+# =========================
+# Playwright / browser state
+# =========================
+playwright/.auth/
+playwright-report/
+test-results/
+.playwright/
+.pw-cov/
+
+# =========================
+# Docker
+# =========================
+docker-data/
+docker-volumes/
+*.tar
+
+# =========================
+# GitHub / CI artifacts
+# =========================
+coverage.json
+reports/
+artifacts/
+
+# =========================
+# Local workspace
+# =========================
+*.code-workspace
+
+# =========================
+# Binary/package outputs
+# =========================
+*.exe
+*.app
+*.dmg
+*.msi
+*.deb
+*.rpm
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# =========================
+# Virtual environments
+# =========================
+.venv/
+venv/
+env/
+ENV/
+
+# =========================
+# Build / packaging
+# =========================
+build/
+dist/
+*.egg-info/
+.eggs/
+*.spec
+MANIFEST
+
+# =========================
+# Testing / coverage
+# =========================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cache/
+.hypothesis/
+
+# =========================
+# IDE / editor
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# =========================
+# Environment files
+# =========================
+.env
+.env.*
+*.env
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+
+# =========================
+# Runtime data and profiles
+# =========================
+data/
+profile/
+playwright/.auth/
+.playwright/
+pw-* 
+*.sqlite3
+*.db
+
+# =========================
+# Playwright reports
+# =========================
+playwright-report/
+test-results/
+
+# =========================
+# Docker / local artifacts
+# =========================
+.docker/
+docker-data/
+*.tar
+
+# =========================
+# GitHub / CI artifacts
+# =========================
+artifacts/
+reports/
+
+# =========================
+# Workspace files
+# =========================
+*.code-workspace
