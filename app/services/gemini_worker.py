@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from playwright.async_api import async_playwright
 
-from app.config import GEMINI_URL, GOOGLE_LOGIN_URL, HEADLESS, PROFILE_DIR, REQUEST_TIMEOUT_SEC, SCRAPE_POLL_INTERVAL, SCRAPE_STABLE_POLLS
+from app.config import GEMINI_URL, GOOGLE_LOGIN_URL, PROFILE_DIR, REQUEST_TIMEOUT_SEC, SCRAPE_POLL_INTERVAL, SCRAPE_STABLE_POLLS
 
 
 class GeminiWorker:
@@ -12,18 +12,22 @@ class GeminiWorker:
         self.playwright = None
         self.context = None
         self.page = None
-        self.started = False
-        self.browser_closed = False
+        self.browser_closed = True
+        self._intentional_close = False
+        self.mode = 'stopped'
         PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
     async def start(self) -> None:
-        if self.context:
-            return
-        if self.browser_closed:
-            print('[gemini] browser was closed; restarting worker')
-            self.browser_closed = False
-        print('[gemini] starting browser worker')
-        self.playwright = await async_playwright().start()
+        print('[gemini] start() called.')
+        self.mode = 'headless_checking'
+        print('[gemini] mode=headless_checking.')
+        print('[gemini] launching headless persistent context.')
+        
+        await self._close_context_only()
+        
+        if not self.playwright:
+            self.playwright = await async_playwright().start()
+            
         browser = self.playwright.chromium
         self.context = await browser.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR),
@@ -36,15 +40,93 @@ class GeminiWorker:
         self.context.on('close', lambda: self._mark_closed())
         pages = self.context.pages
         self.page = pages[0] if pages else await self.context.new_page()
-        self.started = True
+        self.browser_closed = False
+        self._intentional_close = False
+        
+        print('[gemini] headless page ready.')
         self.state.update_status(browser_ready=True, last_info='Chromium worker started.')
-        await self._safe_initial_state()
+        
+        await self.check_google_login_headless()
 
-    async def start_login_browser(self) -> None:
-        if self.context:
-            await self.stop()
-        print('[gemini] starting login browser')
-        self.playwright = await async_playwright().start()
+    async def check_google_login_headless(self) -> bool:
+        if not self.page:
+            return False
+
+        print('[gemini] headless auth probe started')
+        probe_url = 'https://myaccount.google.com/'
+        print(f'[gemini] probe url={probe_url}')
+        
+        try:
+            await self.page.goto(probe_url, wait_until='domcontentloaded')
+            await asyncio.sleep(2)  # Allow redirects
+        except Exception:
+            pass
+
+        final_url = self.page.url
+        print(f'[gemini] probe final url={final_url}')
+
+        logged_in = 'myaccount.google.com' in final_url and 'accounts.google.com' not in final_url
+        print(f'[gemini] probe result logged_in={logged_in}')
+
+        if logged_in:
+            self.mode = 'headless_ready'
+            self.state.update_status(
+                logged_in=True, 
+                first_run=False, 
+                last_info='Logged in and session restored.'
+            )
+        else:
+            self.mode = 'auth_required'
+            self.state.update_status(
+                logged_in=False, 
+                first_run=True, 
+                last_info='Login required.'
+            )
+
+        return logged_in
+
+    async def check_gemini_readiness(self) -> bool:
+        if not self.page:
+            return False
+            
+        try:
+            prompt_box_found = await self.page.evaluate("""
+                () => {
+                    const selectors = ['textarea', '[contenteditable="true"]', '[role="textbox"]', 'div[contenteditable="true"]'];
+                    for (const sel of selectors) {
+                        const el = document.querySelector(sel);
+                        if (el && el.offsetParent !== null) return true;
+                    }
+                    return false;
+                }
+            """)
+            return prompt_box_found
+        except Exception:
+            return False
+
+    async def check_login(self) -> bool:
+        return await self.check_google_login_headless()
+
+    async def open_login(self) -> None:
+        print('[gemini] open_login() called.')
+        print('[gemini] auth probe before opening visible browser.')
+        
+        if self.mode == 'stopped' or not self.context:
+            await self.start()
+        else:
+            await self.check_google_login_headless()
+            
+        if self.mode == 'headless_ready':
+            return
+            
+        print('[gemini] opening visible login')
+        self.mode = 'visible_login'
+        await self._close_context_only()
+        
+        print('[gemini] launching visible persistent context.')
+        if not self.playwright:
+            self.playwright = await async_playwright().start()
+            
         browser = self.playwright.chromium
         self.context = await browser.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR),
@@ -57,100 +139,98 @@ class GeminiWorker:
         self.context.on('close', lambda: self._mark_closed())
         pages = self.context.pages
         self.page = pages[0] if pages else await self.context.new_page()
-        self.started = True
-        self.state.update_status(browser_ready=True, last_info='Login browser opened.')
-        await self.page.goto(GOOGLE_LOGIN_URL, wait_until='load')
-        self.state.update_status(
-            first_run=True,
-            logged_in=False,
-            last_info='Please sign in in the browser window.',
-        )
-
-    def _mark_closed(self):
-        print('[gemini] browser context closed')
-        self.browser_closed = True
-        self.context = None
-        self.page = None
-        self.started = False
-        self.state.update_status(browser_ready=False, logged_in=False, last_error='Browser closed.')
-
-    async def _safe_initial_state(self) -> None:
+        self.browser_closed = False
+        self._intentional_close = False
+        
+        self.state.update_status(browser_ready=True, last_info='Please sign in in the browser window.')
+        
+        print('[gemini] login page opened.')
         try:
-            if not self.page:
-                return
+            await self.page.goto(GOOGLE_LOGIN_URL, wait_until='load')
+        except Exception:
+            pass
 
-            saved_url = self.state.get_status().get('current_chat_url')
-            if saved_url:
-                print(f'[gemini] verifying saved session at {saved_url}')
-                self.state.update_status(last_info='Verifying saved session...')
-                await self.page.goto(saved_url, wait_until='load')
-                
-                logged_in = False
-                for _ in range(10):
-                    if await self._detect_logged_in():
-                        logged_in = True
-                        break
-                    await asyncio.sleep(0.5)
-                
-                if logged_in:
-                    print('[gemini] session valid, stayed on chat')
-                    self.state.update_status(
-                        logged_in=True, 
-                        first_run=False, 
-                        last_info='Logged in and session restored.'
-                    )
-                    return
-                else:
-                    print('[gemini] session invalid or redirected, prompting login')
+        while self.context and not self.browser_closed and self.mode == 'visible_login':
+            await asyncio.sleep(1)
             
-            await self.open_login()
-            logged_in = await self._detect_logged_in()
-            self.state.update_status(
-                logged_in=logged_in,
-                first_run=not logged_in,
-                last_info='Probing session validity in background...' if not logged_in else 'Logged in.'
-            )
-        except Exception as exc:
-            print(f'[gemini] initial state check failed: {exc}')
+        if self.mode == 'stopped':
+            return
+            
+        print('[gemini] visible login closed')
+        print('[gemini] rechecking headless auth after visible close')
+        await self.start()
+        gemini_ready = self.mode == 'headless_ready'
+        print(f'[gemini] gemini ready={gemini_ready}')
 
-    async def ensure_started(self) -> bool:
-        if self.browser_closed:
-            self.state.update_status(browser_ready=False, logged_in=False, last_error='Browser was closed. Click Open Login to reopen.')
-            return False
-        if not self.context:
-            return False
-        return True
-
-    async def stop(self) -> None:
-        print('[gemini] stopping browser worker')
+    async def _close_context_only(self):
+        print('[gemini] closing headless context intentionally')
+        self._intentional_close = True
         try:
             if self.context:
                 await self.context.close()
-        finally:
-            self.context = None
-            self.page = None
-            self.started = False
-            self.browser_closed = False
+        except Exception:
+            pass
+        self.context = None
+        self.page = None
+        self.browser_closed = True
+
+    def _mark_closed(self):
+        print('[gemini] context close event fired.')
+        print(f'[gemini] intentional_close={self._intentional_close}.')
+        print(f'[gemini] mode at close={self.mode}.')
+        
+        recovery_needed = not self._intentional_close and self.mode in ('headless_checking', 'headless_ready', 'gemini_ready')
+        print(f'[gemini] recovery needed={recovery_needed}.')
+        
+        self.browser_closed = True
+        self.context = None
+        self.page = None
+        
+        if self._intentional_close:
+            self._intentional_close = False
+            return
+            
+        if self.mode != 'visible_login' and self.mode != 'stopped':
+            self.state.update_status(browser_ready=False, last_error='Browser closed unexpectedly.')
+
+    async def stop(self) -> None:
+        print('[gemini] stop() called.')
+        print('[gemini] close all resources intentionally.')
+        self.mode = 'stopped'
+        self._intentional_close = True
+        
+        try:
+            if self.context:
+                await self.context.close()
+        except Exception:
+            pass
+            
+        try:
             if self.playwright:
                 await self.playwright.stop()
-                self.playwright = None
-            self.state.update_status(browser_ready=False, logged_in=False)
-
-    async def open_login(self) -> None:
-        print('[gemini] open login')
-        await self.start_login_browser()
+        except Exception:
+            pass
+            
+        self.context = None
+        self.page = None
+        self.playwright = None
+        self.browser_closed = True
+        
+        self.state.update_status(browser_ready=False, logged_in=False)
+        print('[gemini] worker stopped.')
+        print('[gemini] profile cleared.' if not PROFILE_DIR.exists() else '')
 
     async def open_gemini(self) -> None:
-        if not await self.ensure_started():
+        if self.mode == 'stopped' or not self.context:
             await self.start()
         if not self.page:
             raise RuntimeError('BROWSER_NOT_READY')
         print('[gemini] open gemini')
         await self._open_preferred_chat()
-        await self.check_login()
+        await self.check_google_login_headless()
 
     async def new_chat(self) -> None:
-        if not await self.ensure_started():
+        if self.mode == 'stopped' or not self.context:
             await self.start()
         if not self.page:
             raise RuntimeError('BROWSER_NOT_READY')
@@ -159,64 +239,19 @@ class GeminiWorker:
         self.state.update_status(current_chat_url=None, last_info='Opened fresh Gemini app page for a new chat.')
         self.state.clear_messages()
 
-    async def check_login(self) -> bool:
-        if self.browser_closed:
-            self.state.update_status(browser_ready=False, logged_in=False, last_error='Browser closed. Click Open Login to reopen.')
-            print('[gemini] check_login: browser closed')
-            return False
-        if not self.context or not self.page:
-            self.state.update_status(last_info='Browser not started yet. Click Open Login.', logged_in=False)
-            print('[gemini] check_login without browser -> False')
-            return False
-        try:
-            logged_in = await self._detect_logged_in()
-            print(f'[gemini] login check logged_in={logged_in} url={self.page.url}')
-            self.state.update_status(logged_in=logged_in, first_run=not logged_in, last_info=('Logged in.' if logged_in else 'Not logged in.'))
-            return logged_in
-        except Exception as exc:
-            self.state.update_status(last_error=str(exc), last_info='')
-            print(f'[gemini] check_login failed: {exc}')
-            return False
-
-    async def _detect_logged_in(self) -> bool:
-        if not self.page:
-            return False
-        try:
-            url = self.page.url.lower()
-            if 'myaccount.google.com/?utm_source=sign_in_no_continue&pli=1' in url:
-                return True
-            if 'accounts.google.com' in url:
-                return False
-            if 'gemini.google.com' not in url and 'myaccount.google.com' not in url:
-                return False
-            body = await self.page.locator('body').inner_text(timeout=2000)
-            text = ' '.join(body.lower().split())
-            bad_markers = [
-                'sign in', 'sign in to google', 'create account', 'choose an account',
-                'couldn’t sign you in', 'couldnt sign you in', 'this browser or app may not be secure',
-                'try using a different browser', 'not logged in', 'finish signing in', 'something went wrong'
-            ]
-            good_markers = [
-                'new chat', 'gemini', 'ask gemini', 'prompt', 'message', 'chat', 'help me',
-                'you said', 'conversation', 'draft', 'generate', 'myaccount.google.com/?utm_source=sign_in_no_continue&pli=1'
-            ]
-            if any(m in text for m in bad_markers):
-                return False
-            if any(m in text for m in good_markers):
-                return True
-            return 'myaccount.google.com/?utm_source=sign_in_no_continue&pli=1' in url or ('accounts.google.com' not in url and ('gemini.google.com' in url or 'myaccount.google.com' in url))
-        except Exception:
-            url = self.page.url.lower()
-            return 'myaccount.google.com/?utm_source=sign_in_no_continue&pli=1' in url or ('accounts.google.com' not in url and ('gemini.google.com' in url or 'myaccount.google.com' in url))
-
     async def ask(self, prompt: str) -> dict:
-        if not self.context or not self.page:
+        if self.mode == 'stopped' or not self.context or not self.page:
             raise RuntimeError('BROWSER_NOT_READY')
-        if self.browser_closed:
-            raise RuntimeError('BROWSER_CLOSED')
-        if not await self.check_login():
-            raise RuntimeError('LOGIN_REQUIRED')
+        if self.mode not in ('headless_ready', 'gemini_ready'):
+            if not await self.check_google_login_headless():
+                raise RuntimeError('LOGIN_REQUIRED')
+            
         await self._open_preferred_chat()
+        
+        is_ready = await self.check_gemini_readiness()
+        if is_ready:
+            self.mode = 'gemini_ready'
+            
         self.state.add_message('user', prompt)
         print(f'[gemini] ask prompt={prompt[:120]!r}')
         await self._type_prompt(prompt)
