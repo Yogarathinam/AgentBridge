@@ -28,7 +28,9 @@ class GeminiWorker:
         self.context = await browser.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR),
             headless=True,
-            channel='chromium',
+            channel='chrome',
+            args=['--disable-blink-features=AutomationControlled'],
+            ignore_default_args=['--enable-automation'],
             viewport={'width': 1440, 'height': 920},
         )
         self.context.on('close', lambda: self._mark_closed())
@@ -37,6 +39,32 @@ class GeminiWorker:
         self.started = True
         self.state.update_status(browser_ready=True, last_info='Chromium worker started.')
         await self._safe_initial_state()
+
+    async def start_login_browser(self) -> None:
+        if self.context:
+            await self.stop()
+        print('[gemini] starting login browser')
+        self.playwright = await async_playwright().start()
+        browser = self.playwright.chromium
+        self.context = await browser.launch_persistent_context(
+            user_data_dir=str(PROFILE_DIR),
+            headless=False,
+            channel='chrome',
+            args=['--disable-blink-features=AutomationControlled'],
+            ignore_default_args=['--enable-automation'],
+            viewport={'width': 1440, 'height': 920},
+        )
+        self.context.on('close', lambda: self._mark_closed())
+        pages = self.context.pages
+        self.page = pages[0] if pages else await self.context.new_page()
+        self.started = True
+        self.state.update_status(browser_ready=True, last_info='Login browser opened.')
+        await self.page.goto(GOOGLE_LOGIN_URL, wait_until='load')
+        self.state.update_status(
+            first_run=True,
+            logged_in=False,
+            last_info='Please sign in in the browser window.',
+        )
 
     def _mark_closed(self):
         print('[gemini] browser context closed')
@@ -109,21 +137,8 @@ class GeminiWorker:
             self.state.update_status(browser_ready=False, logged_in=False)
 
     async def open_login(self) -> None:
-        if not await self.ensure_started():
-            await self.start()
-        if not self.page:
-            raise RuntimeError('BROWSER_NOT_READY')
         print('[gemini] open login')
-        try:
-            if self.page.url.startswith('https://accounts.google.com') or 'myaccount.google.com' in self.page.url:
-                self.state.update_status(last_info='Google page is already open.', first_run=True)
-                return
-            await self.page.goto(GOOGLE_LOGIN_URL, wait_until='load')
-            self.state.update_status(last_info='Probing session validity in background...', first_run=True)
-        except Exception as exc:
-            self.state.update_status(last_error=str(exc), last_info='')
-            print(f'[gemini] open_login failed: {exc}')
-            raise
+        await self.start_login_browser()
 
     async def open_gemini(self) -> None:
         if not await self.ensure_started():

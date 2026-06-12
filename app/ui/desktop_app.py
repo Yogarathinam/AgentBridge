@@ -352,7 +352,13 @@ class AgentBridgeWindow(QMainWindow):
         elif status.get('logged_in'):
             self.guide.setPlainText("System Ready.\n\nUse your extension or the test chat below to prompt Gemini.")
         else:
-            self.guide.setPlainText("1. Click Start Server.\n2. Click Authenticate.\n3. Sign in to Gemini in browser.\n4. Connect extension.\n\n* Clear Session deletes profile.")
+            self.guide.setPlainText(
+                "1. Click Start Server.\n"
+                "2. Click Authenticate.\n"
+                "3. Sign in to Gemini in browser.\n"
+                "4. Connect extension.\n\n"
+                "* Clear Session deletes the saved profile and starts fresh."
+            )
 
     def toggle_service(self):
         if not self.runtime:
@@ -389,13 +395,13 @@ class AgentBridgeWindow(QMainWindow):
     def authenticate_action(self):
         if not self.runtime:
             return
-        self.set_loading_state(self.auth_btn, 'Checking...', False)
+        self.set_loading_state(self.auth_btn, 'Opening...', False)
         try:
             status = self.runtime.state.get_status()
-            if status.get('logged_in'):
-                self._run_coro(self.runtime.gemini_worker.check_login(), show_error=True)
-            else:
+            if not status.get('logged_in'):
                 self._run_coro(self.runtime.gemini_worker.open_login(), show_error=True)
+            else:
+                self._run_coro(self.runtime.gemini_worker.check_login(), show_error=True)
         finally:
             self.auth_btn.setEnabled(True)
             self.refresh()
