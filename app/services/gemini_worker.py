@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 from playwright.async_api import async_playwright
 
 from app.config import GEMINI_URL, GOOGLE_LOGIN_URL, PROFILE_DIR, REQUEST_TIMEOUT_SEC, SCRAPE_POLL_INTERVAL, SCRAPE_STABLE_POLLS
@@ -15,19 +17,19 @@ class GeminiWorker:
         self.browser_closed = True
         self._intentional_close = False
         self.mode = 'stopped'
+        self._last_response_fingerprint = ''
         PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
     async def start(self) -> None:
         print('[gemini] start() called.')
+        if self.context:
+            return
         self.mode = 'headless_checking'
         print('[gemini] mode=headless_checking.')
         print('[gemini] launching headless persistent context.')
-        
         await self._close_context_only()
-        
         if not self.playwright:
             self.playwright = await async_playwright().start()
-            
         browser = self.playwright.chromium
         self.context = await browser.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR),
@@ -42,65 +44,47 @@ class GeminiWorker:
         self.page = pages[0] if pages else await self.context.new_page()
         self.browser_closed = False
         self._intentional_close = False
-        
         print('[gemini] headless page ready.')
         self.state.update_status(browser_ready=True, last_info='Chromium worker started.')
-        
         await self.check_google_login_headless()
 
     async def check_google_login_headless(self) -> bool:
         if not self.page:
             return False
-
         print('[gemini] headless auth probe started')
         probe_url = 'https://myaccount.google.com/'
         print(f'[gemini] probe url={probe_url}')
-        
         try:
             await self.page.goto(probe_url, wait_until='domcontentloaded')
-            await asyncio.sleep(2)  # Allow redirects
+            await asyncio.sleep(2)
         except Exception:
             pass
-
         final_url = self.page.url
         print(f'[gemini] probe final url={final_url}')
-
         logged_in = 'myaccount.google.com' in final_url and 'accounts.google.com' not in final_url
         print(f'[gemini] probe result logged_in={logged_in}')
-
         if logged_in:
             self.mode = 'headless_ready'
-            self.state.update_status(
-                logged_in=True, 
-                first_run=False, 
-                last_info='Logged in and session restored.'
-            )
+            self.state.update_status(logged_in=True, first_run=False, last_info='Logged in and session restored.')
         else:
             self.mode = 'auth_required'
-            self.state.update_status(
-                logged_in=False, 
-                first_run=True, 
-                last_info='Login required.'
-            )
-
+            self.state.update_status(logged_in=False, first_run=True, last_info='Login required.')
         return logged_in
 
     async def check_gemini_readiness(self) -> bool:
         if not self.page:
             return False
-            
         try:
-            prompt_box_found = await self.page.evaluate("""
+            return bool(await self.page.evaluate("""
                 () => {
                     const selectors = ['textarea', '[contenteditable="true"]', '[role="textbox"]', 'div[contenteditable="true"]'];
                     for (const sel of selectors) {
-                        const el = document.querySelector(sel);
-                        if (el && el.offsetParent !== null) return true;
+                        const els = Array.from(document.querySelectorAll(sel));
+                        if (els.some(el => el && el.offsetParent !== null)) return true;
                     }
                     return false;
                 }
-            """)
-            return prompt_box_found
+            """))
         except Exception:
             return False
 
@@ -110,23 +94,18 @@ class GeminiWorker:
     async def open_login(self) -> None:
         print('[gemini] open_login() called.')
         print('[gemini] auth probe before opening visible browser.')
-        
         if self.mode == 'stopped' or not self.context:
             await self.start()
         else:
             await self.check_google_login_headless()
-            
         if self.mode == 'headless_ready':
             return
-            
         print('[gemini] opening visible login')
         self.mode = 'visible_login'
         await self._close_context_only()
-        
         print('[gemini] launching visible persistent context.')
         if not self.playwright:
             self.playwright = await async_playwright().start()
-            
         browser = self.playwright.chromium
         self.context = await browser.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR),
@@ -141,21 +120,16 @@ class GeminiWorker:
         self.page = pages[0] if pages else await self.context.new_page()
         self.browser_closed = False
         self._intentional_close = False
-        
         self.state.update_status(browser_ready=True, last_info='Please sign in in the browser window.')
-        
         print('[gemini] login page opened.')
         try:
             await self.page.goto(GOOGLE_LOGIN_URL, wait_until='load')
         except Exception:
             pass
-
         while self.context and not self.browser_closed and self.mode == 'visible_login':
             await asyncio.sleep(1)
-            
         if self.mode == 'stopped':
             return
-            
         print('[gemini] visible login closed')
         print('[gemini] rechecking headless auth after visible close')
         await self.start()
@@ -178,18 +152,14 @@ class GeminiWorker:
         print('[gemini] context close event fired.')
         print(f'[gemini] intentional_close={self._intentional_close}.')
         print(f'[gemini] mode at close={self.mode}.')
-        
         recovery_needed = not self._intentional_close and self.mode in ('headless_checking', 'headless_ready', 'gemini_ready')
         print(f'[gemini] recovery needed={recovery_needed}.')
-        
         self.browser_closed = True
         self.context = None
         self.page = None
-        
         if self._intentional_close:
             self._intentional_close = False
             return
-            
         if self.mode != 'visible_login' and self.mode != 'stopped':
             self.state.update_status(browser_ready=False, last_error='Browser closed unexpectedly.')
 
@@ -198,27 +168,22 @@ class GeminiWorker:
         print('[gemini] close all resources intentionally.')
         self.mode = 'stopped'
         self._intentional_close = True
-        
         try:
             if self.context:
                 await self.context.close()
         except Exception:
             pass
-            
         try:
             if self.playwright:
                 await self.playwright.stop()
         except Exception:
             pass
-            
         self.context = None
         self.page = None
         self.playwright = None
         self.browser_closed = True
-        
         self.state.update_status(browser_ready=False, logged_in=False)
         print('[gemini] worker stopped.')
-        print('[gemini] profile cleared.' if not PROFILE_DIR.exists() else '')
 
     async def open_gemini(self) -> None:
         if self.mode == 'stopped' or not self.context:
@@ -238,6 +203,7 @@ class GeminiWorker:
         await self.page.goto(GEMINI_URL, wait_until='load')
         self.state.update_status(current_chat_url=None, last_info='Opened fresh Gemini app page for a new chat.')
         self.state.clear_messages()
+        self._last_response_fingerprint = ''
 
     async def ask(self, prompt: str) -> dict:
         if self.mode == 'stopped' or not self.context or not self.page:
@@ -245,20 +211,20 @@ class GeminiWorker:
         if self.mode not in ('headless_ready', 'gemini_ready'):
             if not await self.check_google_login_headless():
                 raise RuntimeError('LOGIN_REQUIRED')
-            
         await self._open_preferred_chat()
-        
         is_ready = await self.check_gemini_readiness()
         if is_ready:
             self.mode = 'gemini_ready'
-            
+        baseline = await self._get_latest_response_text()
+        self._last_response_fingerprint = self._fingerprint(baseline)
         self.state.add_message('user', prompt)
-        print(f'[gemini] ask prompt={prompt[:120]!r}')
+        print(f"[gemini] ask prompt={prompt[:120]!r}")
         await self._type_prompt(prompt)
         await self._submit_prompt()
-        text = await self._wait_for_response()
+        text = await self._wait_for_new_response(self._last_response_fingerprint)
         await self._capture_chat_url_if_any()
         self.state.add_message('assistant', text)
+        self._last_response_fingerprint = self._fingerprint(text)
         print(f'[gemini] got response chars={len(text)}')
         return {'text': text, 'chat_url': self.state.get_status().get('current_chat_url')}
 
@@ -278,6 +244,38 @@ class GeminiWorker:
         if 'gemini.google.com' in url and '/app' in url and url != GEMINI_URL:
             self.state.update_status(current_chat_url=url, last_info='Active Gemini chat saved.')
             print(f'[gemini] saved chat url={url}')
+
+    def _fingerprint(self, text: str) -> str:
+        normalized = re.sub(r'\s+', ' ', (text or '')).strip().lower()
+        return hashlib.sha256(normalized.encode('utf-8')).hexdigest() if normalized else ''
+
+    async def _get_latest_response_text(self) -> str:
+        if not self.page:
+            return ''
+        return await self._extract_response_once()
+
+    async def _wait_for_new_response(self, baseline_fp: str) -> str:
+        deadline = asyncio.get_event_loop().time() + REQUEST_TIMEOUT_SEC
+        previous = ''
+        previous_fp = ''
+        stable_hits = 0
+        while asyncio.get_event_loop().time() < deadline:
+            await asyncio.sleep(SCRAPE_POLL_INTERVAL)
+            text = await self._extract_response_once()
+            fp = self._fingerprint(text)
+            if not text:
+                continue
+            if fp == baseline_fp:
+                continue
+            if fp == previous_fp:
+                stable_hits += 1
+            else:
+                previous = text
+                previous_fp = fp
+                stable_hits = 0
+            if previous and stable_hits >= SCRAPE_STABLE_POLLS:
+                return previous
+        raise RuntimeError('SCRAPE_FAILED')
 
     async def _type_prompt(self, prompt: str) -> None:
         if not self.page:
@@ -346,22 +344,6 @@ class GeminiWorker:
         result = await self.page.evaluate(script)
         if not result.get('ok'):
             raise RuntimeError(result.get('error') or 'SUBMIT_FAILED')
-
-    async def _wait_for_response(self) -> str:
-        deadline = asyncio.get_event_loop().time() + REQUEST_TIMEOUT_SEC
-        previous = ''
-        stable_hits = 0
-        while asyncio.get_event_loop().time() < deadline:
-            await asyncio.sleep(SCRAPE_POLL_INTERVAL)
-            text = await self._extract_response_once()
-            if text and text == previous:
-                stable_hits += 1
-            elif text:
-                previous = text
-                stable_hits = 0
-            if previous and stable_hits >= SCRAPE_STABLE_POLLS:
-                return previous
-        raise RuntimeError('SCRAPE_FAILED')
 
     async def _extract_response_once(self) -> str:
         if not self.page:
