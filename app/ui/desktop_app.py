@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QTimer, Qt
+import os
+import asyncio
+from PyQt6.QtCore import QTimer, Qt, QUrl, QPropertyAnimation, QEasingCurve, QRect, QRectF
+from PyQt6.QtGui import QDesktopServices, QPixmap, QPainter, QPainterPath, QColor
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -16,101 +19,250 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QLineEdit,
+    QGraphicsBlurEffect,
+    QGraphicsScene,
+    QGraphicsPixmapItem
 )
+
+from app.config import APP_VERSION, WEB_URL
 
 STYLE = """
 QMainWindow {
-    background-color: #0b0d12;
+    background-color: transparent;
 }
+
+QFrame#CentralWidget {
+    background-color: transparent;
+    border: none;
+}
+
+/* Glassmorphism styling with higher transparency */
 QFrame#MainPanel, QFrame#AdvPanel {
-    background-color: #13161f;
-    border: 1px solid #222634;
+    background-color: rgba(20, 24, 34, 130);
+    border: 1px solid rgba(255, 255, 255, 30);
     border-radius: 12px;
 }
+
 QFrame#HeaderFrame {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1e2230, stop:1 #13161f);
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(255, 255, 255, 20), stop:1 rgba(255, 255, 255, 5));
     border-radius: 8px;
-    border-top: 2px solid #3b82f6;
+    border-top: 1px solid rgba(255, 255, 255, 50);
+    border-bottom: 1px solid rgba(0, 0, 0, 30);
 }
-QLabel { color: #f8fafc; font-family: 'Segoe UI', Inter, sans-serif; }
+
+QLabel { color: #f8fafc; font-family: 'Segoe UI', Inter, sans-serif; background: transparent; }
 QLabel#Title { font-size: 16px; font-weight: 800; color: #ffffff; letter-spacing: 0.5px; }
-QLabel#Subtitle { font-size: 10px; color: #64748b; background: transparent; }
+QLabel#Subtitle { font-size: 10px; color: #cbd5e1; }
 
 QPushButton#ServiceBtn {
-    background-color: #3b82f6;
+    background-color: rgba(59, 130, 246, 210);
     color: white;
     font-weight: bold;
     font-size: 13px;
     border-radius: 8px;
     padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 30);
 }
-QPushButton#ServiceBtn:hover { background-color: #2563eb; }
-QPushButton#ServiceBtn:disabled { background-color: #1e3a8a; color: #94a3b8; }
+QPushButton#ServiceBtn:hover { background-color: rgba(37, 99, 235, 255); }
+QPushButton#ServiceBtn:disabled { background-color: rgba(30, 58, 138, 150); color: #94a3b8; }
 
 QPushButton#ServiceBtnStop {
-    background-color: #ef4444;
+    background-color: rgba(239, 68, 68, 210);
     color: white;
     font-weight: bold;
     font-size: 13px;
     border-radius: 8px;
     padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 30);
 }
-QPushButton#ServiceBtnStop:hover { background-color: #dc2626; }
-QPushButton#ServiceBtnStop:disabled { background-color: #7f1d1d; color: #94a3b8; }
+QPushButton#ServiceBtnStop:hover { background-color: rgba(220, 38, 38, 255); }
+QPushButton#ServiceBtnStop:disabled { background-color: rgba(127, 29, 29, 150); color: #94a3b8; }
 
 QPushButton#ToolbarBtn {
-    background-color: #1e2230;
-    color: #cbd5e1;
-    border: 1px solid #2d3345;
+    background-color: rgba(30, 34, 48, 110);
+    color: #f8fafc;
+    border: 1px solid rgba(255, 255, 255, 25);
     border-radius: 6px;
     padding: 8px;
     font-size: 10px;
     font-weight: bold;
 }
-QPushButton#ToolbarBtn:hover { background-color: #272c3d; color: white; }
-QPushButton#ToolbarBtn:disabled { color: #475569; border-color: #1e2230; }
+QPushButton#ToolbarBtn:hover { background-color: rgba(59, 130, 246, 180); color: white; border: 1px solid rgba(255, 255, 255, 50); }
+QPushButton#ToolbarBtn:disabled { color: #475569; border-color: transparent; }
 
 QPushButton#DestructiveBtn {
-    background-color: #7f1d1d;
+    background-color: rgba(127, 29, 29, 150);
     color: #f8fafc;
-    border: 1px solid #991b1b;
+    border: 1px solid rgba(255, 255, 255, 25);
     padding: 6px 12px;
     border-radius: 6px;
     font-size: 9px;
     font-weight: bold;
 }
-QPushButton#DestructiveBtn:hover { background-color: #991b1b; }
-QPushButton#DestructiveBtn:disabled { background-color: #450a0a; color: #94a3b8; }
+QPushButton#DestructiveBtn:hover { background-color: rgba(220, 38, 38, 200); }
+QPushButton#DestructiveBtn:disabled { background-color: rgba(69, 10, 10, 150); color: #94a3b8; }
+
+QPushButton#DownloadBtn {
+    background-color: #10b981;
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 40);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 9px;
+    font-weight: bold;
+}
+QPushButton#DownloadBtn:hover { background-color: #059669; }
+
+QPushButton#TitleBtn {
+    background: transparent;
+    color: #cbd5e1;
+    font-weight: bold;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+}
+QPushButton#TitleBtn:hover {
+    background: rgba(255, 255, 255, 30);
+    color: white;
+}
+QPushButton#TitleCloseBtn {
+    background: transparent;
+    color: #cbd5e1;
+    font-weight: bold;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+}
+QPushButton#TitleCloseBtn:hover {
+    background: #ef4444;
+    color: white;
+}
 
 QFrame#InnerPanel {
-    background-color: #1e2230;
+    background-color: rgba(11, 13, 18, 90);
+    border: 1px solid rgba(255, 255, 255, 15);
     border-radius: 8px;
 }
 
 QTextEdit, QLineEdit {
-    background-color: #0b0d12;
-    color: #e2e8f0;
-    border: 1px solid #2d3345;
+    background-color: rgba(11, 13, 18, 120);
+    color: #f8fafc;
+    border: 1px solid rgba(255, 255, 255, 20);
     border-radius: 6px;
     padding: 8px;
     font-family: Consolas, 'Courier New', monospace;
     font-size: 10px;
 }
-QTextEdit:focus, QLineEdit:focus { border: 1px solid #3b82f6; }
+QTextEdit:focus, QLineEdit:focus { border: 1px solid #3b82f6; background-color: rgba(11, 13, 18, 160); }
 """
+
+class BlurBackgroundFrame(QFrame):
+    def __init__(self, bg_path, parent=None):
+        super().__init__(parent)
+        self.bg_pixmap = QPixmap(bg_path)
+        # Increased blur for better visual aesthetic
+        self.blurred_body = self._create_blurred(self.bg_pixmap, 20)
+        self.blurred_title = self._create_blurred(self.bg_pixmap, 50)
+
+    def _create_blurred(self, pixmap: QPixmap, radius: int) -> QPixmap:
+        if pixmap.isNull():
+            return pixmap
+        scene = QGraphicsScene()
+        item = QGraphicsPixmapItem(pixmap)
+        blur = QGraphicsBlurEffect()
+        blur.setBlurRadius(radius)
+        item.setGraphicsEffect(blur)
+        scene.addItem(item)
+        res = QPixmap(pixmap.size())
+        res.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(res)
+        scene.render(painter)
+        painter.end()
+        return res
+
+    def paintEvent(self, event):
+        if self.bg_pixmap.isNull():
+            super().paintEvent(event)
+            return
+            
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        
+        rect = self.rect()
+        
+        # Clip for rounded window corners
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(rect), 12, 12)
+        painter.setClipPath(path)
+        
+        # Calculate aspect ratio (Cover behavior)
+        scaled_body = self.blurred_body.scaled(
+            rect.size(), 
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding, 
+            Qt.TransformationMode.SmoothTransformation
+        )
+        crop_x = (scaled_body.width() - rect.width()) // 2
+        crop_y = (scaled_body.height() - rect.height()) // 2
+        
+        # Draw Beautifully Blurred Main Background
+        painter.drawPixmap(rect.topLeft(), scaled_body, QRect(crop_x, crop_y, rect.width(), rect.height()))
+        
+        # Draw Heavily Blurred Background exclusively for Title Bar (Height: 40px)
+        title_rect = QRect(0, 0, rect.width(), 40)
+        scaled_title = self.blurred_title.scaled(
+            rect.size(), 
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding, 
+            Qt.TransformationMode.SmoothTransformation
+        )
+        painter.drawPixmap(title_rect.topLeft(), scaled_title, QRect(crop_x, crop_y, title_rect.width(), title_rect.height()))
+        
+        # Dimming Overlays (Brightened and stylized)
+        painter.fillRect(rect, QColor(0, 0, 0, 50))                   # Reduced darkening for brighter appearance
+        painter.fillRect(title_rect, QColor(255, 255, 255, 35))       # Frost highlight on title bar
+        painter.fillRect(title_rect, QColor(11, 13, 18, 30))          # Base depth for title bar
+        
+        # 1px structural separator for title bar
+        painter.setPen(QColor(255, 255, 255, 40))
+        painter.drawLine(0, 40, rect.width(), 40)
+        
+        # Frame Outer Border
+        painter.setPen(QColor(255, 255, 255, 50))
+        painter.drawRoundedRect(rect.adjusted(0, 0, -1, -1), 12, 12)
+        
+        painter.end()
+        super().paintEvent(event)
+
 
 class AgentBridgeWindow(QMainWindow):
     def __init__(self, runtime) -> None:
         super().__init__()
         self.runtime = runtime
+        
+        # Setup frameless and translucent window attributes
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowTitle('AgentBridge')
+        self.old_pos = None
         self.setStyleSheet(STYLE)
+        
         self.is_advanced_open = False
         self.is_busy = False
         self._build_ui()
         self.setFixedWidth(380)
-        self.setMinimumHeight(560)
-        self.resize(380, 560)
+        self.setMinimumHeight(600)
+        self.resize(380, 600)
+
+        # Setup Animations for fluid toggle
+        self.anim_min = QPropertyAnimation(self, b"minimumWidth")
+        self.anim_max = QPropertyAnimation(self, b"maximumWidth")
+        self.anim_min.setDuration(350)
+        self.anim_max.setDuration(350)
+        self.anim_min.setEasingCurve(QEasingCurve.Type.OutQuart)
+        self.anim_max.setEasingCurve(QEasingCurve.Type.OutQuart)
+        
+        self.anim_min.finished.connect(self._on_animation_finished)
+
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         if self.runtime:
@@ -118,11 +270,56 @@ class AgentBridgeWindow(QMainWindow):
             self.refresh()
 
     def _build_ui(self) -> None:
-        central_widget = QWidget()
+        bg_path = os.path.join(os.path.dirname(__file__), "bg.jpg").replace("\\", "/")
+        central_widget = BlurBackgroundFrame(bg_path)
+        central_widget.setObjectName("CentralWidget")
         self.setCentralWidget(central_widget)
 
-        main_h_layout = QHBoxLayout(central_widget)
-        main_h_layout.setContentsMargins(12, 12, 12, 12)
+        main_v_layout = QVBoxLayout(central_widget)
+        main_v_layout.setContentsMargins(0, 0, 0, 0)
+        main_v_layout.setSpacing(0)
+
+        # ---------------- Custom Title Bar ----------------
+        title_bar = QFrame()
+        title_bar.setFixedHeight(40)
+        tb_layout = QHBoxLayout(title_bar)
+        tb_layout.setContentsMargins(12, 0, 12, 0)
+        
+        logo_lbl = QLabel()
+        logo_path = os.path.join(os.path.dirname(__file__), "logo.png").replace("\\", "/")
+        if os.path.exists(logo_path):
+            # Sharp downsampling using 2x Device Pixel Ratio
+            pixmap = QPixmap(logo_path).scaled(40, 40, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            pixmap.setDevicePixelRatio(2.0)
+            logo_lbl.setPixmap(pixmap)
+        else:
+            logo_lbl.setText("🤖")
+            
+        app_title = QLabel("AgentBridge")
+        app_title.setStyleSheet("font-weight: 800; font-size: 13px; color: #ffffff;")
+        
+        min_btn = QPushButton("—")
+        min_btn.setObjectName("TitleBtn")
+        min_btn.setFixedSize(32, 32)
+        min_btn.clicked.connect(self.showMinimized)
+        
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("TitleCloseBtn")
+        close_btn.setFixedSize(32, 32)
+        close_btn.clicked.connect(self.close)
+        
+        tb_layout.addWidget(logo_lbl)
+        tb_layout.addWidget(app_title)
+        tb_layout.addStretch()
+        tb_layout.addWidget(min_btn)
+        tb_layout.addWidget(close_btn)
+        
+        main_v_layout.addWidget(title_bar)
+
+        # ---------------- Main Content Area ----------------
+        content_widget = QWidget()
+        main_h_layout = QHBoxLayout(content_widget)
+        main_h_layout.setContentsMargins(12, 0, 12, 12)
         main_h_layout.setSpacing(12)
 
         self.main_panel = QFrame()
@@ -143,15 +340,15 @@ class AgentBridgeWindow(QMainWindow):
         title = QLabel('AgentBridge')
         title.setObjectName('Title')
         title.setStyleSheet("background: transparent;")
-        subtitle = QLabel('Gemini bridge • WS Ready')
+        subtitle = QLabel('Core Service Agent')
         subtitle.setObjectName('Subtitle')
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
 
         self.badge = QLabel('OFFLINE')
         self.badge.setStyleSheet(
-            "color: #94a3b8; font-size: 8px; font-weight: 800; "
-            "background-color: #1e293b; border-radius: 4px; padding: 4px 8px; letter-spacing: 0.5px;"
+            "color: #cbd5e1; font-size: 8px; font-weight: 800; "
+            "background-color: rgba(30, 41, 59, 180); border-radius: 4px; padding: 4px 8px; letter-spacing: 0.5px; border: 1px solid rgba(255, 255, 255, 40);"
         )
         self.badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -170,7 +367,7 @@ class AgentBridgeWindow(QMainWindow):
 
         clients_box = QVBoxLayout()
         clients_lbl = QLabel('ACTIVE CLIENTS')
-        clients_lbl.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 9px; letter-spacing: 0.5px;")
+        clients_lbl.setStyleSheet("color: #cbd5e1; font-weight: 700; font-size: 9px; letter-spacing: 0.5px;")
         self.clients_val = QLabel('0')
         self.clients_val.setStyleSheet("color: white; font-size: 24px; font-weight: bold; font-family: Consolas;")
         clients_box.addWidget(clients_lbl)
@@ -179,9 +376,9 @@ class AgentBridgeWindow(QMainWindow):
         request_box = QVBoxLayout()
         request_header = QHBoxLayout()
         request_lbl = QLabel('REQUEST STATUS')
-        request_lbl.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 9px; letter-spacing: 0.5px;")
+        request_lbl.setStyleSheet("color: #cbd5e1; font-weight: 700; font-size: 9px; letter-spacing: 0.5px;")
         self.request_val = QLabel('Idle')
-        self.request_val.setStyleSheet("color: #cbd5e1; font-size: 10px; font-family: Consolas; font-weight: bold;")
+        self.request_val.setStyleSheet("color: #f8fafc; font-size: 10px; font-family: Consolas; font-weight: bold;")
         request_header.addWidget(request_lbl)
         request_header.addStretch()
         request_header.addWidget(self.request_val)
@@ -192,8 +389,8 @@ class AgentBridgeWindow(QMainWindow):
         self.request_bar.setValue(0)
         self.request_bar.setFixedHeight(6)
         self.request_bar.setStyleSheet("""
-            QProgressBar { background-color: #1e2230; border-radius: 3px; border: none; }
-            QProgressBar::chunk { background-color: #3b82f6; border-radius: 3px; }
+            QProgressBar { background-color: rgba(30, 34, 48, 120); border-radius: 3px; border: 1px solid rgba(255, 255, 255, 20); }
+            QProgressBar::chunk { background-color: #3b82f6; border-radius: 2px; }
         """)
         request_box.addLayout(request_header)
         request_box.addWidget(self.request_bar)
@@ -231,10 +428,13 @@ class AgentBridgeWindow(QMainWindow):
         status_layout = QVBoxLayout(status_panel)
         status_layout.setContentsMargins(14, 14, 14, 14)
         status_layout.setSpacing(10)
-        self.server_lbl = self._add_status_row(status_layout, 'Server Status', 'Stopped', '#94a3b8')
-        self.auth_lbl = self._add_status_row(status_layout, 'Auth State', 'Not logged in', '#94a3b8')
-        self.port_lbl = self._add_status_row(status_layout, 'Port', '-', '#f8fafc')
-        self.chat_lbl = self._add_status_row(status_layout, 'Chat URL', 'No chat yet', '#f8fafc')
+        self.server_lbl = self._add_status_row(status_layout, 'Server Status', 'Stopped', '#cbd5e1')
+        self.auth_lbl = self._add_status_row(status_layout, 'Auth State', 'Not logged in', '#cbd5e1')
+        self.port_lbl = self._add_status_row(status_layout, 'Port', '-', '#ffffff')
+        self.chat_lbl = self._add_status_row(status_layout, 'Chat URL', 'No chat yet', '#ffffff')
+        self.user_lbl = self._add_status_row(status_layout, 'User', 'Not available', '#ffffff')
+        self.version_lbl = self._add_status_row(status_layout, 'Version', APP_VERSION, '#ffffff')
+        self._add_update_row(status_layout)
         layout.addWidget(status_panel)
         layout.addStretch()
 
@@ -251,11 +451,11 @@ class AgentBridgeWindow(QMainWindow):
         utils_layout = QHBoxLayout()
         self.test_mode = QCheckBox('TEST MODE')
         self.test_mode.setChecked(True)
-        self.test_mode.setStyleSheet("color: #cbd5e1; font-weight: bold; font-size: 10px;")
+        self.test_mode.setStyleSheet("color: #f8fafc; font-weight: bold; font-size: 10px;")
 
         open_gemini_btn = QPushButton('Open Gemini UI')
         open_gemini_btn.setStyleSheet(
-            "background-color: #1e2230; color: #f8fafc; border: 1px solid #2d3345; "
+            "background-color: rgba(30, 34, 48, 120); color: #ffffff; border: 1px solid rgba(255, 255, 255, 40); "
             "padding: 6px 12px; border-radius: 6px; font-size: 9px; font-weight: bold;"
         )
         open_gemini_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -276,17 +476,17 @@ class AgentBridgeWindow(QMainWindow):
         grid.setSpacing(10)
 
         guide_lbl = QLabel('ONBOARDING GUIDE')
-        guide_lbl.setStyleSheet("color: #64748b; font-weight: 800; font-size: 9px; letter-spacing: 0.5px;")
+        guide_lbl.setStyleSheet("color: #cbd5e1; font-weight: 800; font-size: 9px; letter-spacing: 0.5px;")
         self.guide = QTextEdit()
         self.guide.setReadOnly(True)
         self.guide.setFixedHeight(85)
 
         error_lbl = QLabel('STATUS / ERROR')
-        error_lbl.setStyleSheet("color: #64748b; font-weight: 800; font-size: 9px; letter-spacing: 0.5px;")
+        error_lbl.setStyleSheet("color: #cbd5e1; font-weight: 800; font-size: 9px; letter-spacing: 0.5px;")
         self.info_box = QTextEdit()
         self.info_box.setReadOnly(True)
         self.info_box.setFixedHeight(85)
-        self.info_box.setStyleSheet(self.info_box.styleSheet() + "; color: #f43f5e;")
+        self.info_box.setStyleSheet(self.info_box.styleSheet() + "; color: #f87171;")
 
         grid.addWidget(guide_lbl, 0, 0)
         grid.addWidget(self.guide, 1, 0)
@@ -295,7 +495,7 @@ class AgentBridgeWindow(QMainWindow):
         adv_layout.addLayout(grid)
 
         chat_lbl = QLabel('BUILT-IN TEST CHAT')
-        chat_lbl.setStyleSheet("color: #64748b; font-weight: 800; font-size: 9px; letter-spacing: 0.5px;")
+        chat_lbl.setStyleSheet("color: #cbd5e1; font-weight: 800; font-size: 9px; letter-spacing: 0.5px;")
         adv_layout.addWidget(chat_lbl)
 
         chat_input_layout = QHBoxLayout()
@@ -303,8 +503,8 @@ class AgentBridgeWindow(QMainWindow):
         self.prompt_box.setPlaceholderText('Ask Gemini...')
         self.send_btn = QPushButton('Send')
         self.send_btn.setStyleSheet(
-            "background-color: #3b82f6; color: white; padding: 8px 16px; "
-            "border-radius: 6px; font-weight: bold; font-size: 10px;"
+            "background-color: rgba(59, 130, 246, 210); color: white; padding: 8px 16px; "
+            "border-radius: 6px; font-weight: bold; font-size: 10px; border: 1px solid rgba(255, 255, 255, 40);"
         )
         self.send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.send_btn.clicked.connect(self.send_test_prompt)
@@ -319,7 +519,7 @@ class AgentBridgeWindow(QMainWindow):
         adv_layout.addWidget(self.chat_box)
 
         log_lbl = QLabel('DEBUG LOG')
-        log_lbl.setStyleSheet("color: #64748b; font-weight: 800; font-size: 9px; letter-spacing: 0.5px;")
+        log_lbl.setStyleSheet("color: #cbd5e1; font-weight: 800; font-size: 9px; letter-spacing: 0.5px;")
         adv_layout.addWidget(log_lbl)
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
@@ -327,11 +527,13 @@ class AgentBridgeWindow(QMainWindow):
 
         main_h_layout.addWidget(self.adv_panel)
         self.adv_panel.setVisible(False)
+        
+        main_v_layout.addWidget(content_widget)
 
     def _add_status_row(self, parent_layout, label_text, value_text, val_color):
         row = QHBoxLayout()
         lbl = QLabel(label_text)
-        lbl.setStyleSheet("color: #cbd5e1; font-size: 11px; font-weight: 600;")
+        lbl.setStyleSheet("color: #e2e8f0; font-size: 11px; font-weight: 600;")
         val = QLabel(value_text)
         val.setStyleSheet(f"color: {val_color}; font-size: 11px; font-family: Consolas; font-weight: bold;")
         val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -339,6 +541,40 @@ class AgentBridgeWindow(QMainWindow):
         row.addWidget(val)
         parent_layout.addLayout(row)
         return val
+
+    def _add_update_row(self, parent_layout):
+        row = QHBoxLayout()
+        lbl = QLabel('Update')
+        lbl.setStyleSheet("color: #e2e8f0; font-size: 11px; font-weight: 600;")
+        
+        self.update_lbl = QLabel('Up to date')
+        self.update_lbl.setStyleSheet("color: #34d399; font-size: 11px; font-family: Consolas; font-weight: bold;")
+        self.update_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        
+        self.download_btn = QPushButton('Download')
+        self.download_btn.setObjectName('DownloadBtn')
+        self.download_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.download_btn.setVisible(False)
+        self.download_btn.clicked.connect(self.download_update)
+        
+        row.addWidget(lbl)
+        row.addStretch()
+        row.addWidget(self.update_lbl)
+        row.addWidget(self.download_btn)
+        parent_layout.addLayout(row)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.old_pos = event.globalPosition().toPoint()
+
+    def mouseMoveEvent(self, event):
+        if self.old_pos is not None:
+            delta = event.globalPosition().toPoint() - self.old_pos
+            self.move(self.pos() + delta)
+            self.old_pos = event.globalPosition().toPoint()
+
+    def mouseReleaseEvent(self, event):
+        self.old_pos = None
 
     def set_loading_state(self, btn, text, enabled=False):
         btn.setText(text)
@@ -355,27 +591,80 @@ class AgentBridgeWindow(QMainWindow):
             self.guide.setPlainText(
                 "1. Click Start Server.\n"
                 "2. Click Authenticate.\n"
-                "3. Sign in to Gemini in browser.\n"
+                "3. Sign in to Google in browser.\n"
                 "4. Connect extension.\n\n"
                 "* Clear Session deletes the saved profile and starts fresh."
             )
+
+    def _run_async(self, coro, btn=None, texts=None, show_error=True, on_done=None):
+        future = asyncio.run_coroutine_threadsafe(coro, self.runtime.gemini_loop.loop)
+        
+        anim_timer = None
+        if btn and texts:
+            anim_state = {'ticks': 0, 'idx': 0}
+            def update_anim():
+                dots = "." * (anim_state['ticks'] % 4)
+                current_text = texts[anim_state['idx']]
+                btn.setText(f"{current_text}{dots}")
+                anim_state['ticks'] += 1
+                if anim_state['ticks'] % 5 == 0:
+                    anim_state['idx'] = min(anim_state['idx'] + 1, len(texts) - 1)
+            
+            anim_timer = QTimer(self)
+            anim_timer.timeout.connect(update_anim)
+            anim_timer.start(300)
+
+        poll_timer = QTimer(self)
+        def check():
+            if future.done():
+                poll_timer.stop()
+                poll_timer.deleteLater()
+                if anim_timer:
+                    anim_timer.stop()
+                    anim_timer.deleteLater()
+                
+                try:
+                    res = future.result()
+                    if on_done: on_done(res)
+                except Exception as exc:
+                    msg = str(exc)
+                    self.runtime.state.update_status(last_error=msg, last_info='')
+                    self.runtime.log(f'ERROR: {msg}')
+                    if show_error:
+                        QMessageBox.critical(self, 'Error', msg)
+                    if on_done: on_done(None)
+                finally:
+                    self.refresh()
+                    
+        poll_timer.timeout.connect(check)
+        poll_timer.start(50)
 
     def toggle_service(self):
         if not self.runtime:
             return
         running = bool(self.runtime.state.get_status().get('server_running'))
-        try:
-            if running:
-                self.set_loading_state(self.service_btn, 'Stopping...', False)
-                self.runtime.gemini_loop.run(self.runtime.stop_service())
-                self.runtime.log('Stop server requested from UI')
-            else:
-                self.set_loading_state(self.service_btn, 'Starting...', False)
-                self.runtime.gemini_loop.run(self.runtime.start_service())
-                self.runtime.log('Start server requested from UI')
-        finally:
-            self.service_btn.setEnabled(True)
-            self.refresh()
+        if running:
+            self.set_loading_state(self.service_btn, 'Stopping...', False)
+            self.runtime.log('Stop server requested from UI')
+            self._run_async(
+                self.runtime.stop_service(),
+                btn=self.service_btn,
+                texts=['Stopping service', 'Closing connections', 'Cleaning up'],
+                on_done=lambda _: self._finalize_toggle()
+            )
+        else:
+            self.set_loading_state(self.service_btn, 'Starting...', False)
+            self.runtime.log('Start server requested from UI')
+            self._run_async(
+                self.runtime.start_service(),
+                btn=self.service_btn,
+                texts=['Checking system', 'Verifying Google account', 'Launching browser', 'Starting WebSocket'],
+                on_done=lambda _: self._finalize_toggle()
+            )
+
+    def _finalize_toggle(self):
+        self.service_btn.setEnabled(True)
+        self.refresh()
 
     def clear_session(self):
         if not self.runtime:
@@ -396,27 +685,50 @@ class AgentBridgeWindow(QMainWindow):
         if not self.runtime:
             return
         self.set_loading_state(self.auth_btn, 'Opening...', False)
-        try:
-            status = self.runtime.state.get_status()
-            if not status.get('logged_in'):
-                self._run_coro(self.runtime.gemini_worker.open_login(), show_error=True)
-            else:
-                self._run_coro(self.runtime.gemini_worker.check_login(), show_error=True)
-        finally:
-            self.auth_btn.setEnabled(True)
-            self.refresh()
+        status = self.runtime.state.get_status()
+        if not status.get('logged_in'):
+            coro = self.runtime.gemini_worker.open_login()
+        else:
+            coro = self.runtime.gemini_worker.check_login()
+            
+        self._run_async(
+            coro,
+            btn=self.auth_btn,
+            texts=['Verifying session', 'Checking cookies', 'Opening Google Auth'],
+            on_done=lambda _: self._finalize_auth()
+        )
+
+    def _finalize_auth(self):
+        self.auth_btn.setEnabled(True)
+        self.refresh()
+
+    def download_update(self):
+        QDesktopServices.openUrl(QUrl(WEB_URL))
 
     def toggle_advanced(self):
         self.is_advanced_open = not self.is_advanced_open
-        self.adv_panel.setVisible(self.is_advanced_open)
+        
+        target_width = 772 if self.is_advanced_open else 380
+        
+        self.anim_min.setStartValue(self.width())
+        self.anim_min.setEndValue(target_width)
+        self.anim_max.setStartValue(self.width())
+        self.anim_max.setEndValue(target_width)
+
         if self.is_advanced_open:
             self.adv_btn.setText('Advanced ⏴')
-            self.adv_btn.setStyleSheet("background-color: #272c3d; color: #3b82f6;")
-            self.setFixedWidth(380 + 380 + 12 + 24)
+            self.adv_btn.setStyleSheet("background-color: rgba(59, 130, 246, 180); color: #ffffff; border: 1px solid rgba(255, 255, 255, 50);")
+            self.adv_panel.setVisible(True)
         else:
             self.adv_btn.setText('Advanced ⏵')
             self.adv_btn.setStyleSheet("")
-            self.setFixedWidth(380)
+            
+        self.anim_min.start()
+        self.anim_max.start()
+
+    def _on_animation_finished(self):
+        if not self.is_advanced_open:
+            self.adv_panel.setVisible(False)
 
     def refresh(self) -> None:
         if not self.runtime:
@@ -442,37 +754,50 @@ class AgentBridgeWindow(QMainWindow):
         chat_url = status.get('current_chat_url')
         self.chat_lbl.setText('Active' if chat_url else 'None')
 
+        user_email = status.get('user_email') or 'Not available'
+        self.user_lbl.setText(user_email)
+        self.version_lbl.setText(str(status.get('latest_version') or APP_VERSION))
+        
+        update_available = bool(status.get('update_available'))
+        self.update_lbl.setText('Update available' if update_available else 'Up to date')
+        self.update_lbl.setStyleSheet(
+            'color: #fbbf24; font-size: 11px; font-family: Consolas; font-weight: bold;'
+            if update_available else
+            'color: #34d399; font-size: 11px; font-family: Consolas; font-weight: bold;'
+        )
+        self.download_btn.setVisible(update_available)
+
         if server_running and logged_in:
             self.badge.setText('OPERATIONAL')
-            self.badge.setStyleSheet("color: #10b981; font-size: 8px; font-weight: 800; background-color: #064e3b; border-radius: 4px; padding: 4px 8px; letter-spacing: 0.5px;")
+            self.badge.setStyleSheet("color: #34d399; font-size: 8px; font-weight: 800; background-color: rgba(6, 78, 59, 200); border-radius: 4px; padding: 4px 8px; letter-spacing: 0.5px; border: 1px solid rgba(255, 255, 255, 40);")
         elif server_running:
             self.badge.setText('AUTH NEEDED')
-            self.badge.setStyleSheet("color: #f59e0b; font-size: 8px; font-weight: 800; background-color: #78350f; border-radius: 4px; padding: 4px 8px; letter-spacing: 0.5px;")
+            self.badge.setStyleSheet("color: #fbbf24; font-size: 8px; font-weight: 800; background-color: rgba(120, 53, 15, 200); border-radius: 4px; padding: 4px 8px; letter-spacing: 0.5px; border: 1px solid rgba(255, 255, 255, 40);")
         else:
             self.badge.setText('OFFLINE')
-            self.badge.setStyleSheet("color: #94a3b8; font-size: 8px; font-weight: 800; background-color: #1e293b; border-radius: 4px; padding: 4px 8px; letter-spacing: 0.5px;")
+            self.badge.setStyleSheet("color: #cbd5e1; font-size: 8px; font-weight: 800; background-color: rgba(30, 41, 59, 200); border-radius: 4px; padding: 4px 8px; letter-spacing: 0.5px; border: 1px solid rgba(255, 255, 255, 30);")
 
         if server_running:
             self.service_btn.setText('Stop Server')
             self.service_btn.setObjectName('ServiceBtnStop')
             self.server_lbl.setText('Running')
-            self.server_lbl.setStyleSheet("color: #10b981; font-size: 11px; font-family: Consolas; font-weight: bold;")
+            self.server_lbl.setStyleSheet("color: #34d399; font-size: 11px; font-family: Consolas; font-weight: bold;")
         else:
             self.service_btn.setText('Start Server')
             self.service_btn.setObjectName('ServiceBtn')
             self.server_lbl.setText('Stopped')
-            self.server_lbl.setStyleSheet("color: #f43f5e; font-size: 11px; font-family: Consolas; font-weight: bold;")
+            self.server_lbl.setStyleSheet("color: #f87171; font-size: 11px; font-family: Consolas; font-weight: bold;")
 
         self.service_btn.style().unpolish(self.service_btn)
         self.service_btn.style().polish(self.service_btn)
 
         if logged_in:
             self.auth_lbl.setText('Logged In')
-            self.auth_lbl.setStyleSheet("color: #10b981; font-size: 11px; font-family: Consolas; font-weight: bold;")
+            self.auth_lbl.setStyleSheet("color: #34d399; font-size: 11px; font-family: Consolas; font-weight: bold;")
             self.auth_btn.setText('Verify Login')
         else:
             self.auth_lbl.setText('Auth Required')
-            self.auth_lbl.setStyleSheet("color: #f43f5e; font-size: 11px; font-family: Consolas; font-weight: bold;")
+            self.auth_lbl.setStyleSheet("color: #f87171; font-size: 11px; font-family: Consolas; font-weight: bold;")
             self.auth_btn.setText('Authenticate')
             
         self._update_guide_text(status)
@@ -499,33 +824,24 @@ class AgentBridgeWindow(QMainWindow):
         self.runtime.log(f'Test prompt: {prompt[:50]}')
         self.refresh()
 
-        try:
-            self._run_coro(self.runtime.ask_from_ui(prompt), show_error=True)
-        finally:
-            self.runtime.state.update_status(busy=False)
-            self.prompt_box.setEnabled(True)
-            self.send_btn.setEnabled(True)
-            self.send_btn.setText('Send')
-            self.refresh()
+        self._run_async(
+            self.runtime.ask_from_ui(prompt),
+            btn=self.send_btn,
+            texts=['Sending prompt', 'Waiting for Gemini', 'Generating response'],
+            on_done=self._finalize_send
+        )
+
+    def _finalize_send(self, res):
+        self.runtime.state.update_status(busy=False)
+        self.prompt_box.setEnabled(True)
+        self.send_btn.setEnabled(True)
+        self.send_btn.setText('Send')
+        self.refresh()
 
     def new_chat(self):
         if self.runtime:
-            self._run_coro(self.runtime.gemini_worker.new_chat(), show_error=True)
+            self._run_async(self.runtime.gemini_worker.new_chat())
 
     def open_gemini(self):
         if self.runtime:
-            self._run_coro(self.runtime.gemini_worker.open_gemini(), show_error=True)
-
-    def _run_coro(self, coro, show_error: bool):
-        try:
-            result = self.runtime.gemini_loop.run(coro)
-            self.refresh()
-            return result
-        except Exception as exc:
-            message = str(exc)
-            self.runtime.state.update_status(last_error=message, last_info='')
-            self.runtime.log(f'ERROR: {message}')
-            if show_error:
-                QMessageBox.critical(self, 'Error', message)
-            self.refresh()
-            return None
+            self._run_async(self.runtime.gemini_worker.open_gemini())

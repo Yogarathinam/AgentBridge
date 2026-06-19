@@ -7,9 +7,10 @@ from dataclasses import dataclass, field
 
 import uvicorn
 
-from app.config import HOST, PROFILE_DIR
+from app.config import HOST, PROFILE_DIR, ENABLE_CLOUD, APP_VERSION
 from app.port_manager import find_available_port
 from app.server import create_server
+from app.services.cloud import get_config, register_user
 from app.services.connection_manager import ConnectionManager
 from app.services.gemini_worker import GeminiWorker
 from app.state import AppState
@@ -57,6 +58,47 @@ class Runtime:
     async def ask_from_ui(self, prompt: str) -> dict:
         return await self.gemini_worker.ask(prompt)
 
+    async def _run_cloud_startup(self) -> None:
+        self.state.update_status(cloud_enabled=bool(ENABLE_CLOUD))
+        if not ENABLE_CLOUD:
+            return
+
+        try:
+            email = self.state.get_status().get("user_email")
+            if email:
+                try:
+                    await register_user(email, APP_VERSION)
+                    self.log(f"Cloud user registered: {email}")
+                except Exception as exc:
+                    self.log(f"Cloud register failed: {exc}")
+
+            try:
+                cfg = await get_config()
+                latest_version = cfg.get("latestVersion")
+                announcement = cfg.get("announcement") or ""
+                force_update = bool(cfg.get("forceUpdate", False))
+
+                update_available = bool(
+                    latest_version and str(latest_version).strip() != str(APP_VERSION).strip()
+                )
+
+                self.state.update_status(
+                    latest_version=latest_version,
+                    update_available=update_available,
+                    last_info=announcement or self.state.get_status().get("last_info", ""),
+                )
+
+                if announcement:
+                    self.log(f"Announcement loaded: {announcement}")
+                if update_available:
+                    self.log(f"Update available: {latest_version}")
+                if force_update:
+                    self.log("Force update flag received from cloud config.")
+            except Exception as exc:
+                self.log(f"Cloud config check failed: {exc}")
+        except Exception as exc:
+            self.log(f"Cloud startup flow failed: {exc}")
+
     async def start_service(self) -> int:
         if self.server_started and self.state.get_status().get("server_running"):
             return int(self.state.get_status().get("current_port") or 0)
@@ -79,6 +121,18 @@ class Runtime:
                 self.log("Startup probe passed: Authenticated.")
             else:
                 self.log("Startup probe failed: Not authenticated.")
+
+        try:
+            email = self.state.get_status().get("user_email")
+            if not email and is_logged_in:
+                email = await self.gemini_worker.get_google_email()
+                if email:
+                    self.state.update_status(user_email=email)
+                    self.log(f"Google email detected: {email}")
+        except Exception as exc:
+            self.log(f"Email extraction failed: {exc}")
+
+        await self._run_cloud_startup()
 
         port = self.state.get_status().get("current_port")
         if not port:
@@ -157,6 +211,9 @@ class Runtime:
             first_run=True,
             last_info="Profile cleared. Click Authenticate to sign in again.",
             last_error="",
+            user_email=None,
+            latest_version=None,
+            update_available=False,
         )
 
     def shutdown(self):
@@ -179,6 +236,10 @@ def bootstrap_app() -> Runtime:
         busy=False,
         current_chat_url=None,
         first_run=True,
+        user_email=None,
+        latest_version=None,
+        update_available=False,
+        cloud_enabled=bool(ENABLE_CLOUD),
     )
 
     gemini_loop = AsyncBridgeLoop()

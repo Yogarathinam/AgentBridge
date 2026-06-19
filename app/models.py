@@ -41,6 +41,10 @@ class AppStatus:
     test_mode: bool = True
     first_run: bool = True
     service_started: bool = False
+    user_email: str | None = None
+    latest_version: str | None = None
+    update_available: bool = False
+    cloud_enabled: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()

@@ -1,6 +1,11 @@
 from pathlib import Path
 
 APP_NAME = "AgentBridge"
+APP_VERSION = "1.0.0"
+ENABLE_CLOUD = True
+API_BASE_URL = "https://agentbridge-cloud.vercel.app/api"
+WEB_URL = "https://agentbridge-cloud.vercel.app"
+
 HOST = "127.0.0.1"
 PORT_CANDIDATES = [8765, 8766, 8767, 8768, 8769]
 QUEUE_LIMIT = 5

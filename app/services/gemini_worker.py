@@ -5,7 +5,8 @@ import hashlib
 import re
 from playwright.async_api import async_playwright
 
-from app.config import GEMINI_URL, GOOGLE_LOGIN_URL, PROFILE_DIR, REQUEST_TIMEOUT_SEC, SCRAPE_POLL_INTERVAL, SCRAPE_STABLE_POLLS
+from app.config import GEMINI_URL, GOOGLE_LOGIN_URL, PROFILE_DIR, REQUEST_TIMEOUT_SEC, SCRAPE_POLL_INTERVAL, SCRAPE_STABLE_POLLS, ENABLE_CLOUD, APP_VERSION, API_BASE_URL
+from app.state import AppState
 
 
 class GeminiWorker:
@@ -45,8 +46,20 @@ class GeminiWorker:
         self.browser_closed = False
         self._intentional_close = False
         print('[gemini] headless page ready.')
-        self.state.update_status(browser_ready=True, last_info='Chromium worker started.')
+        self.state.update_status(browser_ready=True, last_info='Chromium worker started.', cloud_enabled=bool(ENABLE_CLOUD))
         await self.check_google_login_headless()
+
+    async def get_google_email(self):
+        if not self.page:
+            return None
+        try:
+            await self.page.goto('https://myaccount.google.com/', wait_until='domcontentloaded')
+            await asyncio.sleep(2)
+            text = await self.page.locator('body').inner_text(timeout=5000)
+            m = re.search(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', text or '')
+            return m.group(0) if m else None
+        except Exception:
+            return None
 
     async def check_google_login_headless(self) -> bool:
         if not self.page:
@@ -65,7 +78,10 @@ class GeminiWorker:
         print(f'[gemini] probe result logged_in={logged_in}')
         if logged_in:
             self.mode = 'headless_ready'
-            self.state.update_status(logged_in=True, first_run=False, last_info='Logged in and session restored.')
+            email = await self.get_google_email()
+            self.state.update_status(logged_in=True, first_run=False, last_info='Logged in and session restored.', user_email=email)
+            if ENABLE_CLOUD and email:
+                self.state.update_status(cloud_enabled=True)
         else:
             self.mode = 'auth_required'
             self.state.update_status(logged_in=False, first_run=True, last_info='Login required.')
@@ -221,12 +237,27 @@ class GeminiWorker:
         print(f"[gemini] ask prompt={prompt[:120]!r}")
         await self._type_prompt(prompt)
         await self._submit_prompt()
-        text = await self._wait_for_new_response(self._last_response_fingerprint)
+        try:
+            text = await self._wait_for_new_response(self._last_response_fingerprint)
+        except RuntimeError:
+            await self._refresh_page()
+            raise RuntimeError('TIMEOUT')
         await self._capture_chat_url_if_any()
         self.state.add_message('assistant', text)
         self._last_response_fingerprint = self._fingerprint(text)
         print(f'[gemini] got response chars={len(text)}')
         return {'text': text, 'chat_url': self.state.get_status().get('current_chat_url')}
+
+    async def _refresh_page(self) -> None:
+        if not self.page:
+            return
+        try:
+            await self.page.reload(wait_until='load')
+        except Exception:
+            try:
+                await self.page.goto(self.page.url, wait_until='load')
+            except Exception:
+                pass
 
     async def _open_preferred_chat(self) -> None:
         current_chat = self.state.get_status().get('current_chat_url')
