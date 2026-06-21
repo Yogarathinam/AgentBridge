@@ -61,6 +61,7 @@ class Runtime:
     async def _run_cloud_startup(self) -> None:
         self.state.update_status(cloud_enabled=bool(ENABLE_CLOUD))
         if not ENABLE_CLOUD:
+            print("[BOOTSTRAP] Cloud features are disabled. Skipping startup checks.")
             return
 
         try:
@@ -73,10 +74,19 @@ class Runtime:
                     self.log(f"Cloud register failed: {exc}")
 
             try:
+                print("[BOOTSTRAP] Fetching cloud configuration for updates...")
                 cfg = await get_config()
                 latest_version = cfg.get("latestVersion")
                 announcement = cfg.get("announcement") or ""
-                force_update = bool(cfg.get("forceUpdate", False))
+                
+                # SAFELY PARSE forceUpdate: Handle both string "true" and boolean True
+                force_raw = cfg.get("forceUpdate", False)
+                if isinstance(force_raw, str):
+                    force_update = force_raw.lower() in ['true', '1', 'y', 'yes']
+                else:
+                    force_update = bool(force_raw)
+
+                print(f"[BOOTSTRAP] Parsed config -> Latest: {latest_version}, Force Update: {force_update}")
 
                 update_available = bool(
                     latest_version and str(latest_version).strip() != str(APP_VERSION).strip()
@@ -86,6 +96,7 @@ class Runtime:
                     latest_version=latest_version,
                     update_available=update_available,
                     last_info=announcement or self.state.get_status().get("last_info", ""),
+                    force_update=force_update,
                 )
 
                 if announcement:
@@ -94,6 +105,7 @@ class Runtime:
                     self.log(f"Update available: {latest_version}")
                 if force_update:
                     self.log("Force update flag received from cloud config.")
+                    print("[BOOTSTRAP] FORCE UPDATE DETECTED. Emitting status to UI.")
             except Exception as exc:
                 self.log(f"Cloud config check failed: {exc}")
         except Exception as exc:
@@ -103,6 +115,7 @@ class Runtime:
         if self.server_started and self.state.get_status().get("server_running"):
             return int(self.state.get_status().get("current_port") or 0)
 
+        print("[BOOTSTRAP] Starting Gemini worker sequence...")
         await self.gemini_worker.start()
 
         status = self.state.get_status()
@@ -132,7 +145,15 @@ class Runtime:
         except Exception as exc:
             self.log(f"Email extraction failed: {exc}")
 
+        # Wait for the cloud config to pull announcements/versions
         await self._run_cloud_startup()
+        
+        # --- ABORT SERVER START IF DEPRECATED ---
+        if self.state.get_status().get("force_update"):
+            self.log("ABORTING: Force update required. Halting server start.")
+            print("[BOOTSTRAP] Server abort sequence executed successfully.")
+            return 0 
+        # ----------------------------------------
 
         port = self.state.get_status().get("current_port")
         if not port:
@@ -151,14 +172,38 @@ class Runtime:
         )
 
         app = create_server(self)
-        config = uvicorn.Config(app=app, host=HOST, port=port, log_level="warning")
+        config = uvicorn.Config(
+            app=app,
+            host=HOST,
+            port=port,
+            log_level="warning",
+            access_log=False,
+            log_config=None
+        )
         server = uvicorn.Server(config)
         self.uvicorn_server = server
 
         def run_server():
-            self.log(f"Server started on ws://{HOST}:{port}/ws")
             try:
+                # FINAL FAILSAFE: Thread kill-switch
+                if self.state.get_status().get("force_update"):
+                    self.log("THREAD KILLED: Force update detected. Uvicorn will not run.")
+                    print("[BOOTSTRAP] Uvicorn thread terminated before launch.")
+                    return
+                    
+                self.log(f"Starting uvicorn on ws://{HOST}:{port}/ws")
                 server.run()
+                self.log("uvicorn exited normally")
+            except Exception:
+                import traceback
+                err = traceback.format_exc()
+                self.log(err)
+                try:
+                    with open("server_crash.txt", "w", encoding="utf-8") as f:
+                        f.write(err)
+                except Exception:
+                    pass
+                raise
             finally:
                 self.state.update_status(
                     server_running=False,
@@ -167,6 +212,7 @@ class Runtime:
                 self.server_started = False
                 self.log("Server stopped")
 
+        print(f"[BOOTSTRAP] Spawning uvicorn thread on port {port}...")
         thread = threading.Thread(target=run_server, daemon=True)
         thread.start()
         self.server_thread = thread
@@ -174,6 +220,7 @@ class Runtime:
         return port
 
     async def stop_service(self) -> None:
+        print("[BOOTSTRAP] Stop service requested.")
         try:
             await self.gemini_worker.stop()
         except Exception:
@@ -263,4 +310,9 @@ def bootstrap_app() -> Runtime:
 
     window = AgentBridgeWindow(runtime)
     runtime.window = window
+
+    # Run cloud startup in the background loop to immediately check for force update upon app launch
+    if ENABLE_CLOUD:
+        asyncio.run_coroutine_threadsafe(runtime._run_cloud_startup(), gemini_loop.loop)
+
     return runtime

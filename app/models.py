@@ -45,6 +45,7 @@ class AppStatus:
     latest_version: str | None = None
     update_available: bool = False
     cloud_enabled: bool = False
+    force_update: bool = False  # <--- CRITICAL FIX: Added this field
 
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()

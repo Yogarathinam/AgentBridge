@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app.config import APP_VERSION, WEB_URL
+from app.utils import resource_path
 
 STYLE = """
 QMainWindow {
@@ -50,7 +51,8 @@ QFrame#HeaderFrame {
     border-bottom: 1px solid rgba(0, 0, 0, 30);
 }
 
-QLabel { color: #f8fafc; font-family: 'Segoe UI', Inter, sans-serif; background: transparent; }
+/* SCOPED LABELS: Prevents QMessageBox text from becoming invisible white-on-white */
+QFrame#CentralWidget QLabel { color: #f8fafc; font-family: 'Segoe UI', Inter, sans-serif; background: transparent; }
 QLabel#Title { font-size: 16px; font-weight: 800; color: #ffffff; letter-spacing: 0.5px; }
 QLabel#Subtitle { font-size: 10px; color: #cbd5e1; }
 
@@ -144,7 +146,8 @@ QFrame#InnerPanel {
     border-radius: 8px;
 }
 
-QTextEdit, QLineEdit {
+/* SCOPED INPUTS */
+QFrame#CentralWidget QTextEdit, QFrame#CentralWidget QLineEdit {
     background-color: rgba(11, 13, 18, 120);
     color: #f8fafc;
     border: 1px solid rgba(255, 255, 255, 20);
@@ -153,14 +156,13 @@ QTextEdit, QLineEdit {
     font-family: Consolas, 'Courier New', monospace;
     font-size: 10px;
 }
-QTextEdit:focus, QLineEdit:focus { border: 1px solid #3b82f6; background-color: rgba(11, 13, 18, 160); }
+QFrame#CentralWidget QTextEdit:focus, QFrame#CentralWidget QLineEdit:focus { border: 1px solid #3b82f6; background-color: rgba(11, 13, 18, 160); }
 """
 
 class BlurBackgroundFrame(QFrame):
     def __init__(self, bg_path, parent=None):
         super().__init__(parent)
         self.bg_pixmap = QPixmap(bg_path)
-        # Increased blur for better visual aesthetic
         self.blurred_body = self._create_blurred(self.bg_pixmap, 20)
         self.blurred_title = self._create_blurred(self.bg_pixmap, 50)
 
@@ -191,12 +193,10 @@ class BlurBackgroundFrame(QFrame):
         
         rect = self.rect()
         
-        # Clip for rounded window corners
         path = QPainterPath()
         path.addRoundedRect(QRectF(rect), 12, 12)
         painter.setClipPath(path)
         
-        # Calculate aspect ratio (Cover behavior)
         scaled_body = self.blurred_body.scaled(
             rect.size(), 
             Qt.AspectRatioMode.KeepAspectRatioByExpanding, 
@@ -205,10 +205,8 @@ class BlurBackgroundFrame(QFrame):
         crop_x = (scaled_body.width() - rect.width()) // 2
         crop_y = (scaled_body.height() - rect.height()) // 2
         
-        # Draw Beautifully Blurred Main Background
         painter.drawPixmap(rect.topLeft(), scaled_body, QRect(crop_x, crop_y, rect.width(), rect.height()))
         
-        # Draw Heavily Blurred Background exclusively for Title Bar (Height: 40px)
         title_rect = QRect(0, 0, rect.width(), 40)
         scaled_title = self.blurred_title.scaled(
             rect.size(), 
@@ -217,16 +215,13 @@ class BlurBackgroundFrame(QFrame):
         )
         painter.drawPixmap(title_rect.topLeft(), scaled_title, QRect(crop_x, crop_y, title_rect.width(), title_rect.height()))
         
-        # Dimming Overlays (Brightened and stylized)
-        painter.fillRect(rect, QColor(0, 0, 0, 50))                   # Reduced darkening for brighter appearance
-        painter.fillRect(title_rect, QColor(255, 255, 255, 35))       # Frost highlight on title bar
-        painter.fillRect(title_rect, QColor(11, 13, 18, 30))          # Base depth for title bar
+        painter.fillRect(rect, QColor(0, 0, 0, 50))
+        painter.fillRect(title_rect, QColor(255, 255, 255, 35))
+        painter.fillRect(title_rect, QColor(11, 13, 18, 30))
         
-        # 1px structural separator for title bar
         painter.setPen(QColor(255, 255, 255, 40))
         painter.drawLine(0, 40, rect.width(), 40)
         
-        # Frame Outer Border
         painter.setPen(QColor(255, 255, 255, 50))
         painter.drawRoundedRect(rect.adjusted(0, 0, -1, -1), 12, 12)
         
@@ -239,7 +234,6 @@ class AgentBridgeWindow(QMainWindow):
         super().__init__()
         self.runtime = runtime
         
-        # Setup frameless and translucent window attributes
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowTitle('AgentBridge')
@@ -248,12 +242,13 @@ class AgentBridgeWindow(QMainWindow):
         
         self.is_advanced_open = False
         self.is_busy = False
+        self._force_popup_shown = False
+        
         self._build_ui()
         self.setFixedWidth(380)
         self.setMinimumHeight(600)
         self.resize(380, 600)
 
-        # Setup Animations for fluid toggle
         self.anim_min = QPropertyAnimation(self, b"minimumWidth")
         self.anim_max = QPropertyAnimation(self, b"maximumWidth")
         self.anim_min.setDuration(350)
@@ -270,7 +265,7 @@ class AgentBridgeWindow(QMainWindow):
             self.refresh()
 
     def _build_ui(self) -> None:
-        bg_path = os.path.join(os.path.dirname(__file__), "bg.jpg").replace("\\", "/")
+        bg_path = resource_path("bg.jpg")
         central_widget = BlurBackgroundFrame(bg_path)
         central_widget.setObjectName("CentralWidget")
         self.setCentralWidget(central_widget)
@@ -279,16 +274,14 @@ class AgentBridgeWindow(QMainWindow):
         main_v_layout.setContentsMargins(0, 0, 0, 0)
         main_v_layout.setSpacing(0)
 
-        # ---------------- Custom Title Bar ----------------
         title_bar = QFrame()
         title_bar.setFixedHeight(40)
         tb_layout = QHBoxLayout(title_bar)
         tb_layout.setContentsMargins(12, 0, 12, 0)
         
         logo_lbl = QLabel()
-        logo_path = os.path.join(os.path.dirname(__file__), "logo.png").replace("\\", "/")
+        logo_path = resource_path("logo.png")
         if os.path.exists(logo_path):
-            # Sharp downsampling using 2x Device Pixel Ratio
             pixmap = QPixmap(logo_path).scaled(40, 40, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             pixmap.setDevicePixelRatio(2.0)
             logo_lbl.setPixmap(pixmap)
@@ -316,7 +309,6 @@ class AgentBridgeWindow(QMainWindow):
         
         main_v_layout.addWidget(title_bar)
 
-        # ---------------- Main Content Area ----------------
         content_widget = QWidget()
         main_h_layout = QHBoxLayout(content_widget)
         main_h_layout.setContentsMargins(12, 0, 12, 12)
@@ -408,10 +400,10 @@ class AgentBridgeWindow(QMainWindow):
         self.auth_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.auth_btn.clicked.connect(self.authenticate_action)
 
-        new_chat_btn = QPushButton('New Chat')
-        new_chat_btn.setObjectName('ToolbarBtn')
-        new_chat_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        new_chat_btn.clicked.connect(self.new_chat)
+        self.new_chat_btn = QPushButton('New Chat')
+        self.new_chat_btn.setObjectName('ToolbarBtn')
+        self.new_chat_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.new_chat_btn.clicked.connect(self.new_chat)
 
         self.adv_btn = QPushButton('Advanced ⏵')
         self.adv_btn.setObjectName('ToolbarBtn')
@@ -419,7 +411,7 @@ class AgentBridgeWindow(QMainWindow):
         self.adv_btn.clicked.connect(self.toggle_advanced)
 
         toolbar.addWidget(self.auth_btn)
-        toolbar.addWidget(new_chat_btn)
+        toolbar.addWidget(self.new_chat_btn)
         toolbar.addWidget(self.adv_btn)
         layout.addLayout(toolbar)
 
@@ -453,13 +445,13 @@ class AgentBridgeWindow(QMainWindow):
         self.test_mode.setChecked(True)
         self.test_mode.setStyleSheet("color: #f8fafc; font-weight: bold; font-size: 10px;")
 
-        open_gemini_btn = QPushButton('Open Gemini UI')
-        open_gemini_btn.setStyleSheet(
+        self.open_gemini_btn = QPushButton('Open Gemini UI')
+        self.open_gemini_btn.setStyleSheet(
             "background-color: rgba(30, 34, 48, 120); color: #ffffff; border: 1px solid rgba(255, 255, 255, 40); "
             "padding: 6px 12px; border-radius: 6px; font-size: 9px; font-weight: bold;"
         )
-        open_gemini_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        open_gemini_btn.clicked.connect(self.open_gemini)
+        self.open_gemini_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.open_gemini_btn.clicked.connect(self.open_gemini)
 
         self.clear_btn = QPushButton('Clear Session')
         self.clear_btn.setObjectName('DestructiveBtn')
@@ -468,7 +460,7 @@ class AgentBridgeWindow(QMainWindow):
 
         utils_layout.addWidget(self.test_mode)
         utils_layout.addStretch()
-        utils_layout.addWidget(open_gemini_btn)
+        utils_layout.addWidget(self.open_gemini_btn)
         utils_layout.addWidget(self.clear_btn)
         adv_layout.addLayout(utils_layout)
 
@@ -515,7 +507,7 @@ class AgentBridgeWindow(QMainWindow):
 
         self.chat_box = QTextEdit()
         self.chat_box.setReadOnly(True)
-        self.chat_box.setFixedHeight(100)
+        self.chat_box.setMinimumHeight(120)
         adv_layout.addWidget(self.chat_box)
 
         log_lbl = QLabel('DEBUG LOG')
@@ -523,6 +515,7 @@ class AgentBridgeWindow(QMainWindow):
         adv_layout.addWidget(log_lbl)
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
+        self.log_box.setMinimumHeight(120)
         adv_layout.addWidget(self.log_box)
 
         main_h_layout.addWidget(self.adv_panel)
@@ -596,7 +589,18 @@ class AgentBridgeWindow(QMainWindow):
                 "* Clear Session deletes the saved profile and starts fresh."
             )
 
+    def _check_force_update(self) -> bool:
+        """Shields all button actions. Triggers refresh/lock if flag is active."""
+        if self.runtime and self.runtime.state.get_status().get('force_update'):
+            print("[UI] Action blocked: Force update flag is active. Triggering app lock.", flush=True)
+            self.refresh()
+            return True
+        return False
+
     def _run_async(self, coro, btn=None, texts=None, show_error=True, on_done=None):
+        self.is_busy = True
+        self.refresh()
+        
         future = asyncio.run_coroutine_threadsafe(coro, self.runtime.gemini_loop.loop)
         
         anim_timer = None
@@ -623,6 +627,8 @@ class AgentBridgeWindow(QMainWindow):
                     anim_timer.stop()
                     anim_timer.deleteLater()
                 
+                self.is_busy = False
+                
                 try:
                     res = future.result()
                     if on_done: on_done(res)
@@ -640,8 +646,10 @@ class AgentBridgeWindow(QMainWindow):
         poll_timer.start(50)
 
     def toggle_service(self):
+        if self._check_force_update(): return
         if not self.runtime:
             return
+            
         running = bool(self.runtime.state.get_status().get('server_running'))
         if running:
             self.set_loading_state(self.service_btn, 'Stopping...', False)
@@ -650,7 +658,7 @@ class AgentBridgeWindow(QMainWindow):
                 self.runtime.stop_service(),
                 btn=self.service_btn,
                 texts=['Stopping service', 'Closing connections', 'Cleaning up'],
-                on_done=lambda _: self._finalize_toggle()
+                on_done=self._finalize_toggle
             )
         else:
             self.set_loading_state(self.service_btn, 'Starting...', False)
@@ -659,16 +667,19 @@ class AgentBridgeWindow(QMainWindow):
                 self.runtime.start_service(),
                 btn=self.service_btn,
                 texts=['Checking system', 'Verifying Google account', 'Launching browser', 'Starting WebSocket'],
-                on_done=lambda _: self._finalize_toggle()
+                on_done=self._finalize_toggle
             )
 
-    def _finalize_toggle(self):
-        self.service_btn.setEnabled(True)
+    def _finalize_toggle(self, res=None):
+        if not self.runtime.state.get_status().get('force_update'):
+            self.service_btn.setEnabled(True)
         self.refresh()
 
     def clear_session(self):
+        if self._check_force_update(): return
         if not self.runtime:
             return
+            
         reply = QMessageBox.question(
             self, 'Clear Session',
             'This will close the browser and permanently delete your saved session profile. Continue?',
@@ -682,6 +693,7 @@ class AgentBridgeWindow(QMainWindow):
             self.refresh()
 
     def authenticate_action(self):
+        if self._check_force_update(): return
         if not self.runtime:
             return
         self.set_loading_state(self.auth_btn, 'Opening...', False)
@@ -695,17 +707,20 @@ class AgentBridgeWindow(QMainWindow):
             coro,
             btn=self.auth_btn,
             texts=['Verifying session', 'Checking cookies', 'Opening Google Auth'],
-            on_done=lambda _: self._finalize_auth()
+            on_done=self._finalize_auth
         )
 
-    def _finalize_auth(self):
-        self.auth_btn.setEnabled(True)
+    def _finalize_auth(self, res=None):
+        if not self.runtime.state.get_status().get('force_update'):
+            self.auth_btn.setEnabled(True)
         self.refresh()
 
     def download_update(self):
+        print("[UI] Launching download URL.", flush=True)
         QDesktopServices.openUrl(QUrl(WEB_URL))
 
     def toggle_advanced(self):
+        if self._check_force_update(): return
         self.is_advanced_open = not self.is_advanced_open
         
         target_width = 772 if self.is_advanced_open else 380
@@ -730,18 +745,208 @@ class AgentBridgeWindow(QMainWindow):
         if not self.is_advanced_open:
             self.adv_panel.setVisible(False)
 
+    def show_force_update_popup(self, announcement: str, version: str):
+        """Refined popup overlaying the content panel with a polished UI card."""
+        print(f"[UI] Rendering in-app lock screen overlay...", flush=True)
+        
+        # 1. Disable only the internal panels so title bar buttons (Minimize, Close) remain active.
+        self.main_panel.setDisabled(True)
+        if hasattr(self, 'adv_panel'):
+            self.adv_panel.setDisabled(True)
+
+        # --- DATA SANITIZATION ---
+        clean_ver = str(version) if version and str(version).lower() != 'none' else "Required"
+        if not announcement or "Starting" in announcement or announcement.strip() == "":
+            clean_msg = "A mandatory system update is available. This older version has been deprecated to ensure security and compatibility."
+        else:
+            clean_msg = announcement
+        # -------------------------
+        
+        # 2. Create an overlay that covers everything BELOW the 40px custom title bar
+        self.overlay = QFrame(self) 
+        self.overlay.setGeometry(0, 40, self.width(), self.height() - 40)
+        self.overlay.setStyleSheet("""
+            QFrame {
+                background-color: rgba(15, 23, 42, 230);
+                border-bottom-left-radius: 12px;
+                border-bottom-right-radius: 12px;
+            }
+        """)
+        self.overlay.raise_() 
+        self.overlay.setMouseTracking(True) # Prevent clicks from passing through
+        
+        # 3. Build Main Layout
+        layout = QVBoxLayout(self.overlay)
+        layout.setContentsMargins(24, 20, 24, 40)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # 4. Create an inner "Card" to hold the warning
+        card = QFrame()
+        card.setStyleSheet("""
+            QFrame {
+                background-color: rgba(30, 41, 59, 220);
+                border: 1px solid rgba(239, 68, 68, 100);
+                border-radius: 12px;
+            }
+        """)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(20, 30, 20, 30)
+        card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # 5. Build Content Inside Card
+# 5. Build Content Inside Card
+        icon = QLabel("⚠️")  # Restored the attention mark!
+        # Bumped the font size up to 64px to make it stand out inside the card
+        icon.setStyleSheet("font-size: 64px; background: transparent; border: none;")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        title = QLabel("UPDATE REQUIRED")
+        title.setStyleSheet("color: #f87171; font-weight: 900; font-size: 16px; background: transparent; letter-spacing: 1.5px; border: none;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # We save these as "self" variables so the refresh loop can dynamically update them later!
+        self.overlay_ver_label = QLabel()
+        self.overlay_ver_label.setStyleSheet("color: #93c5fd; font-size: 11px; font-weight: bold; background: transparent; font-family: Consolas; border: none;")
+        self.overlay_ver_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.overlay_msg_label = QLabel()
+        self.overlay_msg_label.setStyleSheet("color: #e2e8f0; font-size: 12px; background: transparent; margin-top: 15px; border: none; line-height: 1.4;")
+        self.overlay_msg_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.overlay_msg_label.setWordWrap(True)
+
+        # Set initial text
+        ver_text = f"Current: v{APP_VERSION}   →   Latest: v{clean_ver}" if clean_ver != "Required" else f"Current: v{APP_VERSION}   →   Update Required"
+        self.overlay_ver_label.setText(ver_text)
+        self.overlay_msg_label.setText(f"{clean_msg}\n\nPlease update to restore full functionality.")
+
+        card_layout.addWidget(icon)
+        card_layout.addSpacing(5)
+        card_layout.addWidget(title)
+        card_layout.addWidget(self.overlay_ver_label)
+        card_layout.addWidget(self.overlay_msg_label)
+
+        # 6. Button Layout
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+        
+        close_btn = QPushButton("Quit")
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255, 255, 255, 10); 
+                color: #cbd5e1; 
+                padding: 10px 14px; 
+                border-radius: 6px; 
+                font-weight: bold; 
+                font-size: 12px;
+                border: 1px solid rgba(255, 255, 255, 20);
+            }
+            QPushButton:hover { 
+                background-color: rgba(239, 68, 68, 150); 
+                color: white; 
+                border-color: transparent;
+            }
+        """)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.clicked.connect(self.close)
+
+        dl_btn = QPushButton("Download Update")
+        dl_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6; 
+                color: white; 
+                padding: 10px 14px; 
+                border-radius: 6px; 
+                font-weight: bold; 
+                font-size: 12px;
+                border: 1px solid rgba(255, 255, 255, 40);
+            }
+            QPushButton:hover { 
+                background-color: #2563eb; 
+                border: 1px solid rgba(255, 255, 255, 80); 
+            }
+        """)
+        dl_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        dl_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(WEB_URL)))
+
+        btn_layout.addWidget(close_btn)
+        btn_layout.addWidget(dl_btn)
+        
+        # 7. Add widgets to main overlay layout
+        layout.addStretch()
+        layout.addWidget(card)
+        layout.addSpacing(20)
+        layout.addLayout(btn_layout)
+        layout.addStretch()
+        
+        # 8. Render
+        self.overlay.show()
+        self.overlay.update()
+        QApplication.processEvents()
+
     def refresh(self) -> None:
         if not self.runtime:
             return
 
         status = self.runtime.state.get_status()
+        force_update = bool(status.get('force_update'))
+        
+        if force_update:
+            # Halt background server if running
+            if status.get('server_running') and not getattr(self, '_force_halt_triggered', False):
+                self._force_halt_triggered = True
+                print("[UI] Force update triggered. Sending aggressive halt signal to background server...", flush=True)
+                self.runtime.log("Force update triggered. Halting background server...")
+                asyncio.run_coroutine_threadsafe(self.runtime.stop_service(), self.runtime.gemini_loop.loop)
+            
+            # Check if popup is already open
+            if not getattr(self, '_force_popup_shown', False):
+                self._force_popup_shown = True
+                print("[UI] Force update flag detected. Locking UI.", flush=True)
+                
+                # Disable buttons
+                self.service_btn.setEnabled(False)
+                self.auth_btn.setEnabled(False)
+                self.new_chat_btn.setEnabled(False)
+                self.adv_btn.setEnabled(False)
+                self.open_gemini_btn.setEnabled(False)
+                self.clear_btn.setEnabled(False)
+                self.send_btn.setEnabled(False)
+                self.prompt_box.setEnabled(False)
+                self.download_btn.setEnabled(False)
+                
+                announcement = status.get('last_info', 'Update Required')
+                version = status.get('latest_version', APP_VERSION)
+                QTimer.singleShot(10, lambda a=announcement, v=version: self.show_force_update_popup(a, v))
+            
+            else:
+                # DYNAMIC UPDATE: If the popup is already showing but the cloud fetch just finished, update the text!
+                if hasattr(self, 'overlay_ver_label') and hasattr(self, 'overlay_msg_label'):
+                    version = status.get('latest_version')
+                    announcement = status.get('last_info', '')
+                    
+                    clean_ver = str(version) if version and str(version).lower() != 'none' else "Required"
+                    ver_text = f"Current: v{APP_VERSION}   →   Latest: v{clean_ver}" if clean_ver != "Required" else f"Current: v{APP_VERSION}   →   Update Required"
+                    
+                    if not announcement or "Starting" in announcement or announcement.strip() == "":
+                        clean_msg = "A mandatory system update is available. This older version has been deprecated to ensure security and compatibility."
+                    else:
+                        clean_msg = announcement
+                        
+                    self.overlay_ver_label.setText(ver_text)
+                    self.overlay_msg_label.setText(f"{clean_msg}\n\nPlease update to restore full functionality.")
+            
+            # EARLY RETURN: This stops the terminal spam and freezes the background UI updates.
+            return
+
         logged_in = bool(status.get('logged_in'))
         server_running = bool(status.get('server_running'))
-        busy = bool(status.get('busy'))
+        runtime_busy = bool(status.get('busy'))
+        
+        currently_working = self.is_busy or runtime_busy
 
         self.clients_val.setText(str(status.get('connected_clients', 0)))
 
-        if busy:
+        if currently_working:
             self.request_val.setText('Working...')
             self.request_bar.setRange(0, 0)
         else:
@@ -778,13 +983,15 @@ class AgentBridgeWindow(QMainWindow):
             self.badge.setStyleSheet("color: #cbd5e1; font-size: 8px; font-weight: 800; background-color: rgba(30, 41, 59, 200); border-radius: 4px; padding: 4px 8px; letter-spacing: 0.5px; border: 1px solid rgba(255, 255, 255, 30);")
 
         if server_running:
-            self.service_btn.setText('Stop Server')
             self.service_btn.setObjectName('ServiceBtnStop')
+            if not self.is_busy:
+                self.service_btn.setText('Stop Server')
             self.server_lbl.setText('Running')
             self.server_lbl.setStyleSheet("color: #34d399; font-size: 11px; font-family: Consolas; font-weight: bold;")
         else:
-            self.service_btn.setText('Start Server')
             self.service_btn.setObjectName('ServiceBtn')
+            if not self.is_busy:
+                self.service_btn.setText('Start Server')
             self.server_lbl.setText('Stopped')
             self.server_lbl.setStyleSheet("color: #f87171; font-size: 11px; font-family: Consolas; font-weight: bold;")
 
@@ -794,22 +1001,40 @@ class AgentBridgeWindow(QMainWindow):
         if logged_in:
             self.auth_lbl.setText('Logged In')
             self.auth_lbl.setStyleSheet("color: #34d399; font-size: 11px; font-family: Consolas; font-weight: bold;")
-            self.auth_btn.setText('Verify Login')
+            if not self.is_busy:
+                self.auth_btn.setText('Verify Login')
         else:
             self.auth_lbl.setText('Auth Required')
             self.auth_lbl.setStyleSheet("color: #f87171; font-size: 11px; font-family: Consolas; font-weight: bold;")
-            self.auth_btn.setText('Authenticate')
-            
+            if not self.is_busy:
+                self.auth_btn.setText('Authenticate')
+
         self._update_guide_text(status)
 
         info = status.get('last_error') or status.get('last_info') or '> Idle. No errors detected.'
         self.info_box.setPlainText(info)
 
+        self.service_btn.setEnabled(not self.is_busy)
+        self.auth_btn.setEnabled(server_running and not currently_working)
+        self.new_chat_btn.setEnabled(server_running and not currently_working)
+        self.open_gemini_btn.setEnabled(server_running and not currently_working)
+        self.clear_btn.setEnabled(not currently_working)
+        self.send_btn.setEnabled(server_running and logged_in and not currently_working)
+        self.prompt_box.setEnabled(server_running and logged_in and not currently_working)
+
         msgs = self.runtime.state.get_messages()
-        self.chat_box.setPlainText('\n'.join([f"[{m['role'].upper()}] {m['text']}" for m in msgs[-20:]]))
-        self.log_box.setPlainText('\n'.join(self.runtime.logs[-50:]))
+        new_chat_text = '\n'.join([f"[{m['role'].upper()}] {m['text']}" for m in msgs[-20:]])
+        if self.chat_box.toPlainText() != new_chat_text:
+            self.chat_box.setPlainText(new_chat_text)
+            self.chat_box.verticalScrollBar().setValue(self.chat_box.verticalScrollBar().maximum())
+
+        new_log_text = '\n'.join(self.runtime.logs[-50:])
+        if self.log_box.toPlainText() != new_log_text:
+            self.log_box.setPlainText(new_log_text)
+            self.log_box.verticalScrollBar().setValue(self.log_box.verticalScrollBar().maximum())
 
     def send_test_prompt(self):
+        if self._check_force_update(): return
         if not self.runtime:
             return
         prompt = self.prompt_box.text().strip()
@@ -831,17 +1056,20 @@ class AgentBridgeWindow(QMainWindow):
             on_done=self._finalize_send
         )
 
-    def _finalize_send(self, res):
+    def _finalize_send(self, res=None):
         self.runtime.state.update_status(busy=False)
-        self.prompt_box.setEnabled(True)
-        self.send_btn.setEnabled(True)
+        if not self.runtime.state.get_status().get('force_update'):
+            self.prompt_box.setEnabled(True)
+            self.send_btn.setEnabled(True)
         self.send_btn.setText('Send')
         self.refresh()
 
     def new_chat(self):
+        if self._check_force_update(): return
         if self.runtime:
             self._run_async(self.runtime.gemini_worker.new_chat())
 
     def open_gemini(self):
+        if self._check_force_update(): return
         if self.runtime:
             self._run_async(self.runtime.gemini_worker.open_gemini())

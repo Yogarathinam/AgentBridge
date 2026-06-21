@@ -1,0 +1,21 @@
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(1,0,0,0),
+    prodvers=(1,0,0,0),
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '040904B0',
+        [
+          StringStruct('CompanyName', 'agentbridge-cloud.vercel.app'),
+          StringStruct('FileDescription', 'AgentBridge'),
+          StringStruct('FileVersion', '1.0.0'),
+          StringStruct('InternalName', 'AgentBridge'),
+          StringStruct('ProductName', 'AgentBridge'),
+          StringStruct('ProductVersion', '1.0.0')
+        ]
+      )
+    ])
+  ]
+)

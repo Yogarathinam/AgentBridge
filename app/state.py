@@ -65,6 +65,12 @@ class AppState:
             s.test_mode = bool(s.test_mode)
         if not isinstance(s.first_run, bool):
             s.first_run = bool(s.first_run)
+            
+        # --- NEW CODE: Normalize force_update ---
+        if not hasattr(s, 'force_update') or not isinstance(getattr(s, 'force_update', False), bool):
+            s.force_update = bool(getattr(s, 'force_update', False))
+        # ----------------------------------------
+        
         if s.current_port is not None:
             try:
                 s.current_port = int(s.current_port)
@@ -82,11 +88,19 @@ class AppState:
         tmp.replace(path)
 
     def save(self) -> None:
-        with self._lock:
-            self._normalize_status()
-            self._write_atomic(STATE_FILE, json.dumps(self.status.to_dict(), indent=2, ensure_ascii=False))
-            self._write_atomic(CHAT_HISTORY_FILE, json.dumps([m.__dict__ for m in self.messages], indent=2, ensure_ascii=False))
-
+            with self._lock:
+                self._normalize_status()
+                
+                # 1. Grab the dictionary
+                data_to_save = self.status.to_dict()
+                
+                # 2. Strip out 'force_update' so it NEVER saves to state.json
+                data_to_save.pop('force_update', None)
+                
+                # 3. Save the clean data to the hard drive
+                self._write_atomic(STATE_FILE, json.dumps(data_to_save, indent=2, ensure_ascii=False))
+                self._write_atomic(CHAT_HISTORY_FILE, json.dumps([m.__dict__ for m in self.messages], indent=2, ensure_ascii=False))
+                
     def update_status(self, **kwargs: Any) -> None:
         with self._lock:
             for key, value in kwargs.items():
