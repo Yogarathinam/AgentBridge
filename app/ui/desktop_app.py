@@ -646,29 +646,34 @@ class AgentBridgeWindow(QMainWindow):
         poll_timer.start(50)
 
     def toggle_service(self):
-        if self._check_force_update(): return
-        if not self.runtime:
-            return
+            if self._check_force_update(): return
+            if not self.runtime:
+                return
+                
+            status = self.runtime.state.get_status()
+            running = bool(status.get('server_running'))
             
-        running = bool(self.runtime.state.get_status().get('server_running'))
-        if running:
-            self.set_loading_state(self.service_btn, 'Stopping...', False)
-            self.runtime.log('Stop server requested from UI')
-            self._run_async(
-                self.runtime.stop_service(),
-                btn=self.service_btn,
-                texts=['Stopping service', 'Closing connections', 'Cleaning up'],
-                on_done=self._finalize_toggle
-            )
-        else:
-            self.set_loading_state(self.service_btn, 'Starting...', False)
-            self.runtime.log('Start server requested from UI')
-            self._run_async(
-                self.runtime.start_service(),
-                btn=self.service_btn,
-                texts=['Checking system', 'Verifying Google account', 'Launching browser', 'Starting WebSocket'],
-                on_done=self._finalize_toggle
-            )
+            # --- REMOVED THE UI INTERCEPT BLOCK HERE ---
+            # We now trust the background bootstrapper to handle auto-logins
+
+            if running:
+                self.set_loading_state(self.service_btn, 'Stopping...', False)
+                self.runtime.log('Stop server requested from UI')
+                self._run_async(
+                    self.runtime.stop_service(),
+                    btn=self.service_btn,
+                    texts=['Stopping service', 'Closing connections', 'Cleaning up'],
+                    on_done=self._finalize_toggle
+                )
+            else:
+                self.set_loading_state(self.service_btn, 'Starting...', False)
+                self.runtime.log('Start server requested from UI')
+                self._run_async(
+                    self.runtime.start_service(),
+                    btn=self.service_btn,
+                    texts=['Checking system', 'Verifying Google account', 'Launching browser', 'Starting WebSocket'],
+                    on_done=self._finalize_toggle
+                )
 
     def _finalize_toggle(self, res=None):
         if not self.runtime.state.get_status().get('force_update'):
@@ -794,7 +799,6 @@ class AgentBridgeWindow(QMainWindow):
         card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         # 5. Build Content Inside Card
-# 5. Build Content Inside Card
         icon = QLabel("⚠️")  # Restored the attention mark!
         # Bumped the font size up to 64px to make it stand out inside the card
         icon.setStyleSheet("font-size: 64px; background: transparent; border: none;")
@@ -1014,8 +1018,9 @@ class AgentBridgeWindow(QMainWindow):
         info = status.get('last_error') or status.get('last_info') or '> Idle. No errors detected.'
         self.info_box.setPlainText(info)
 
+        # --- FIX: Removed 'server_running' requirement from auth_btn and clear_btn ---
         self.service_btn.setEnabled(not self.is_busy)
-        self.auth_btn.setEnabled(server_running and not currently_working)
+        self.auth_btn.setEnabled(not currently_working) 
         self.new_chat_btn.setEnabled(server_running and not currently_working)
         self.open_gemini_btn.setEnabled(server_running and not currently_working)
         self.clear_btn.setEnabled(not currently_working)

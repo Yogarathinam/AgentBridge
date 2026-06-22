@@ -61,9 +61,12 @@ class GeminiWorker:
         self.mode = 'headless_checking'
         print('[gemini] mode=headless_checking.')
         print('[gemini] launching headless persistent context.')
+        
         await self._close_context_only()
+        
         if not self.playwright:
             self.playwright = await async_playwright().start()
+            
         browser = self.playwright.chromium
         self.context = await browser.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR),
@@ -176,14 +179,20 @@ class GeminiWorker:
             await self.start()
         else:
             await self.check_google_login_headless()
+            
         if self.mode == 'headless_ready':
             return
+            
         print('[gemini] opening visible login')
         self.mode = 'visible_login'
+        
+        # Completely terminate engine to release SingletonLock
         await self._close_context_only()
+        
         print('[gemini] launching visible persistent context.')
         if not self.playwright:
             self.playwright = await async_playwright().start()
+            
         browser = self.playwright.chromium
         self.context = await browser.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR),
@@ -200,31 +209,61 @@ class GeminiWorker:
         self._intentional_close = False
         self.state.update_status(browser_ready=True, last_info='Please sign in in the browser window.')
         print('[gemini] login page opened.')
+        
         try:
             await self.page.goto(GOOGLE_LOGIN_URL, wait_until='load')
         except Exception:
             pass
+            
+        # Dynamic polling loop: Detects login success and auto-closes!
         while self.context and not self.browser_closed and self.mode == 'visible_login':
+            try:
+                if self.page and not self.page.is_closed():
+                    url = self.page.url
+                    if 'myaccount.google.com' in url and 'accounts.google.com' not in url:
+                        print('[gemini] Login success detected automatically! Closing browser.')
+                        break
+            except Exception:
+                pass
             await asyncio.sleep(1)
+            
         if self.mode == 'stopped':
             return
+            
         print('[gemini] visible login closed')
-        print('[gemini] rechecking headless auth after visible close')
+        print('[gemini] forcing graceful teardown to permanently save cookies...')
+        
+        # Critically important to flush cookies to disk
+        await self._close_context_only()
+        
+        print('[gemini] restarting headless auth after visible close')
         await self.start()
         gemini_ready = self.mode == 'headless_ready'
         print(f'[gemini] gemini ready={gemini_ready}')
 
     async def _close_context_only(self):
-        print('[gemini] closing headless context intentionally')
+        """Tears down everything including the Playwright engine to force cookie writing and lock releasing."""
+        print('[gemini] closing context intentionally to release profile locks')
         self._intentional_close = True
         try:
             if self.context:
                 await self.context.close()
         except Exception:
             pass
+            
+        try:
+            if self.playwright:
+                await self.playwright.stop()
+        except Exception:
+            pass
+            
         self.context = None
         self.page = None
+        self.playwright = None
         self.browser_closed = True
+        
+        # Give OS time to write cookies to sqlite DB and remove SingletonLock
+        await asyncio.sleep(1.5)
 
     def _mark_closed(self):
         print('[gemini] context close event fired.')
@@ -304,7 +343,6 @@ class GeminiWorker:
             await asyncio.sleep(2)
 
     async def _get_ui_state(self) -> dict:
-        """Priority 7 & 8 - Advanced State Detection with Multiple Signals"""
         if not self.page:
             return {'isGenerating': False, 'messageCount': 0, 'latestLen': 0, 'inputTextLen': 0, 'hasStopButton': False, 'textboxText': '', 'hasGeminiError': False}
         script = """
@@ -394,7 +432,6 @@ class GeminiWorker:
             print(f"[{request_id}] Snapshot capture failed: {e}")
 
     async def ask(self, prompt: str) -> dict:
-        """Priority 1 - Seamlessly Queue Concurrent Requests"""
         async with self._request_lock:
             return await self._ask_impl(prompt)
 
@@ -441,11 +478,9 @@ class GeminiWorker:
                     baseline_state = await self._get_ui_state()
                     print(f"[{request_id}] baseline captured: msgs={baseline_state['messageCount']} len={baseline_state['latestLen']}")
                     
-                    # Priority 12 - Rigid Step-by-Step Production Flow Validation
                     print(f"[{request_id}] prompt typed")
                     await self._type_prompt(prompt)
                     
-                    # Verify typed
                     state = await self._get_ui_state()
                     if not state['textboxText'].strip():
                         print(f"[{request_id}] Type verification missed. Retrying type...")
@@ -457,7 +492,6 @@ class GeminiWorker:
                     print(f"[{request_id}] prompt submitted")
                     await self._submit_prompt()
                     
-                    # Verify submitted
                     await asyncio.sleep(1)
                     post_submit_state = await self._get_ui_state()
                     if post_submit_state['inputTextLen'] > 0 and not post_submit_state['hasStopButton'] and post_submit_state['messageCount'] == baseline_state['messageCount']:
@@ -497,7 +531,6 @@ class GeminiWorker:
                     await self._capture_snapshot(request_id)
                     self.chat_failure_count += 1
                     
-                    # Priority 11 - Hard Recovery
                     if self.chat_failure_count >= 3:
                         print(f"[{request_id}] Chat failure count >= 3. Hard recovery.")
                         await self.new_chat()
@@ -507,7 +540,6 @@ class GeminiWorker:
                     if attempt == 1:
                         await self.debug_dump_ui(request_id)
                     
-                    # Priority 6 - Specific Targeted Recovery Paths
                     if "PROMPT_NOT_TYPED" in err_msg:
                         print(f"[{request_id}] Recovery Action: Retyping (skipping reload)")
                         continue
@@ -594,19 +626,15 @@ class GeminiWorker:
             
             print(f"[{request_id}] base_msgs={baseline_msg_count} base_len={baseline_latest_len} current_msgs={state['messageCount']} len={state['latestLen']} generating={state['isGenerating']} err={state['hasGeminiError']}")
 
-            # Priority 8 - Catch explicit Google interface errors
             if state['hasGeminiError']:
                 raise RuntimeError("GEMINI_ERROR")
 
-            # Change 4 - Track response started
             if state["messageCount"] > baseline_msg_count or state["latestLen"] > baseline_latest_len:
                 response_started = True
 
-            # Priority 4 - Prompt never started generating after 8 seconds (if no stop button either)
             if time.monotonic() - submit_time > 8 and not response_started and not state['hasStopButton']:
                 raise RuntimeError("PROMPT_NOT_ACCEPTED")
                 
-            # Priority 5 / Change 5 - Detect Stalled generation loops vs Never Started loops
             if state['latestLen'] != last_len:
                 last_len = state['latestLen']
                 last_progress = time.monotonic()

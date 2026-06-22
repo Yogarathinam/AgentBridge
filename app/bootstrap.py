@@ -145,15 +145,25 @@ class Runtime:
         except Exception as exc:
             self.log(f"Email extraction failed: {exc}")
 
-        # Wait for the cloud config to pull announcements/versions
+# Wait for the cloud config to pull announcements/versions
         await self._run_cloud_startup()
         
         # --- ABORT SERVER START IF DEPRECATED ---
         if self.state.get_status().get("force_update"):
             self.log("ABORTING: Force update required. Halting server start.")
-            print("[BOOTSTRAP] Server abort sequence executed successfully.")
             return 0 
         # ----------------------------------------
+
+        # --- NEW SERVER BLOCK: ABORT IF NOT LOGGED IN ---
+        if not is_logged_in:
+            self.log("ABORTING: User is not authenticated. Halting server start.")
+            self.state.update_status(
+                server_running=False,
+                last_info="Server startup blocked: Please Authenticate first.",
+                last_error="Login Required"
+            )
+            return 0
+        # ------------------------------------------------
 
         port = self.state.get_status().get("current_port")
         if not port:
@@ -163,6 +173,8 @@ class Runtime:
             f"WebSocket server running on {HOST}:{port}. "
             + ("Authenticated." if is_logged_in else "Login required.")
         )
+        
+        # ... (rest of the method continues setting up uvicorn)
 
         self.state.update_status(
             server_running=True,
